@@ -1,0 +1,1974 @@
+import React, { useState, useEffect, useRef } from "react";
+import { 
+  Sparkles, 
+  Send, 
+  Bot, 
+  User, 
+  Image as ImageIcon, 
+  Sliders, 
+  Download, 
+  Maximize2, 
+  Plus, 
+  Trash2, 
+  Code, 
+  BookOpen, 
+  Compass, 
+  DollarSign, 
+  Activity, 
+  Paperclip, 
+  X, 
+  ChevronRight, 
+  Clock, 
+  FileText, 
+  Copy, 
+  Check, 
+  ExternalLink, 
+  HelpCircle,
+  Cpu,
+  Layers,
+  StickyNote,
+  FileUp,
+  MapPin,
+  Move,
+  Info,
+  Shield,
+  Terminal
+} from "lucide-react";
+import Navbar from "./components/Navbar";
+import AccessCodeModal from "./components/AccessCodeModal";
+import { APP_MODELS, PRICING_PLANS, DOC_CATALOG, DOC_CONTENTS, QUICK_PROMPTS } from "./data";
+import { ChatMessage, ChatSession, CanvasCard } from "./types";
+
+export default function App() {
+  // Navigation & Access Config
+  const [currentRoute, setRoute] = useState<string>("home");
+  const [accessCode, setAccessCode] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      return localStorage.getItem("ronin_access_code") || "";
+    }
+    return "";
+  });
+  const [isAccessModalOpen, setIsAccessModalOpen] = useState(false);
+
+  // Notifications state
+  const [notification, setNotification] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+
+  // --- Multi-Model Chat States ---
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>(() => {
+    if (typeof window !== "undefined") {
+      const persisted = localStorage.getItem("ronin_chat_sessions");
+      if (persisted) {
+        try { return JSON.parse(persisted); } catch (e) { }
+      }
+    }
+    return [
+      {
+        id: "default-session",
+        title: "新开对话沙盒",
+        messages: [
+          {
+            id: "msg-welcome",
+            role: "assistant",
+            content: "您好！我是 RONIN AI 融合助理。这里已被连接到聚合站核心，您可以调用 GPT、Claude 或 DeepSeek 处理文本和研发程序。请在下方输入您的首个课题开始探索吧！",
+            timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+          }
+        ],
+        model: "gpt-4o-mini",
+        updatedAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+      }
+    ];
+  });
+  const [currentSessionId, setCurrentSessionId] = useState<string>("default-session");
+  const [chatInputText, setChatInputText] = useState("");
+  const [selectedChatModel, setSelectedChatModel] = useState("gpt-4o-mini");
+  const [isChatSending, setIsChatSending] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+
+  // --- AI Drawing States ---
+  const [drawPrompt, setDrawPrompt] = useState("");
+  const [drawModel, setDrawModel] = useState("gpt-image-1");
+  const [drawSize, setDrawSize] = useState("1024x1024");
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [generatedImages, setGeneratedImages] = useState<{ url: string; prompt: string; timestamp: string; isFallback?: boolean }[]>([
+    {
+      url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1024&auto=format&fit=crop",
+      prompt: "豪华太空舱科技概念图，极简黑金高光，写实C4D渲染",
+      timestamp: "演示资产"
+    }
+  ]);
+
+  // --- Infinite Canvas Workspace States ---
+  const [canvasCards, setCanvasCards] = useState<CanvasCard[]>([
+    {
+      id: "card-inst-1",
+      type: "note",
+      title: "💡 无限创意看板指引",
+      content: "这是一个自由拖拽平移的灵感空间。您可以：\n1. 双击卡片内容开始编辑文字。\n2. 点击右上方绿色「生成图到画布」快速创作海报。\n3. 按住鼠标或拖动卡片顶部重新布局。",
+      x: 80,
+      y: 90,
+      width: 280,
+      height: 180
+    },
+    {
+      id: "card-prompt-1",
+      type: "prompt",
+      title: "✍️ 黑金极客海报词",
+      content: "A futuristic cyberpunk microchip core floating in pristine black water, subtle neon gold tracing, ultra-realistic visual, cinematic ambient light.",
+      x: 400,
+      y: 60,
+      width: 280,
+      height: 150
+    },
+    {
+      id: "card-img-1",
+      type: "image",
+      title: "🎨 灵感底稿",
+      content: "黑金极速灵感",
+      x: 180,
+      y: 320,
+      width: 320,
+      height: 240,
+      imageUrl: "https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?q=80&w=1024&auto=format&fit=crop"
+    }
+  ]);
+  const [canvasScale, setCanvasScale] = useState(1);
+  const [canvasTranslate, setCanvasTranslate] = useState({ x: 0, y: 0 });
+  const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
+  const [canvasDragStart, setCanvasDragStart] = useState({ x: 0, y: 0 });
+  const [selectedCanvasCard, setSelectedCanvasCard] = useState<string | null>(null);
+  const [activeCardDrag, setActiveCardDrag] = useState<{ id: string; offsetX: number; offsetY: number } | null>(null);
+  const [canvasFile, setCanvasFile] = useState<File | null>(null);
+  const [canvasFilePreview, setCanvasFilePreview] = useState<string | null>(null);
+  const [canvasPromptInput, setCanvasPromptInput] = useState("");
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  // --- Models Filter State ---
+  const [selectedModelCategory, setSelectedModelCategory] = useState<string>("全部");
+
+  // --- Docs Active Section State ---
+  const [activeCatalogItem, setActiveCatalogItem] = useState("intro");
+
+  // --- Effects ---
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("ronin_access_code", accessCode);
+    }
+  }, [accessCode]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("ronin_chat_sessions", JSON.stringify(chatSessions));
+    }
+  }, [chatSessions]);
+
+  useEffect(() => {
+    if (chatBottomRef.current) {
+      chatBottomRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [chatSessions, currentSessionId]);
+
+  // Toast notifier helper
+  const showToast = (text: string, type: "success" | "error" | "info" = "success") => {
+    setNotification({ text, type });
+    setTimeout(() => {
+      setNotification(null);
+    }, 4000);
+  };
+
+  // Switch to different routes & sync states
+  const navigateToChat = (initialPrompt?: string, model?: string) => {
+    let targetSessionId = currentSessionId;
+    if (initialPrompt) {
+      // Create a brand new session with this prompt immediately
+      const newSessionId = `session-${Date.now()}`;
+      const newSession: ChatSession = {
+        id: newSessionId,
+        title: initialPrompt.slice(0, 15) + "...",
+        messages: [
+          {
+            id: `msg-user-init-${Date.now()}`,
+            role: "user",
+            content: initialPrompt,
+            timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+          }
+        ],
+        model: model || "gpt-4o-mini",
+        updatedAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+      };
+      setChatSessions([newSession, ...chatSessions]);
+      setCurrentSessionId(newSessionId);
+      targetSessionId = newSessionId;
+      setRoute("chat");
+      
+      // Auto-trigger API call
+      setTimeout(() => {
+        triggerChatApiSend(initialPrompt, newSessionId, model || "gpt-4o-mini");
+      }, 50);
+    } else {
+      setRoute("chat");
+    }
+  };
+
+  // --- Unified Chat Action ---
+  const handleChatSend = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!chatInputText.trim() || isChatSending) return;
+
+    const userMessageText = chatInputText;
+    setChatInputText("");
+
+    // Append user message
+    const updatedSessions = chatSessions.map(session => {
+      if (session.id === currentSessionId) {
+        const userMsg: ChatMessage = {
+          id: `msg-user-${Date.now()}`,
+          role: "user",
+          content: userMessageText,
+          timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+        };
+        const updatedMsgs = [...session.messages, userMsg];
+        return {
+          ...session,
+          title: session.messages.length <= 1 ? userMessageText.substring(0, 12) + "..." : session.title,
+          messages: updatedMsgs,
+          updatedAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+        };
+      }
+      return session;
+    });
+
+    setChatSessions(updatedSessions);
+    await triggerChatApiSend(userMessageText, currentSessionId, selectedChatModel, updatedSessions);
+  };
+
+  const triggerChatApiSend = async (
+    textToSend: string, 
+    sessionId: string, 
+    modelToUse: string, 
+    currentSessionsState?: ChatSession[]
+  ) => {
+    setIsChatSending(true);
+    const activeSessions = currentSessionsState || chatSessions;
+    const activeSession = activeSessions.find(s => s.id === sessionId);
+    if (!activeSession) return;
+
+    // Build complete historic messages payload format expected by back-end proxy
+    const historicPayload = activeSession.messages.map(m => ({
+      role: m.role,
+      content: m.content
+    }));
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-access-code": accessCode, // Secure access authorization headers
+        },
+        body: JSON.stringify({
+          messages: historicPayload,
+          model: modelToUse
+        })
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error("ACCESS_CODE_REQUIRED");
+        }
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `请求失败 (${response.status})`);
+      }
+
+      const resData = await response.json();
+      const contentReply = resData.choices?.[0]?.message?.content || "无回复内容。";
+
+      setChatSessions(prev => prev.map(s => {
+        if (s.id === sessionId) {
+          const assistantMsg: ChatMessage = {
+            id: `msg-assistant-${Date.now()}`,
+            role: "assistant",
+            content: contentReply,
+            timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+          };
+          return {
+            ...s,
+            messages: [...s.messages, assistantMsg],
+            updatedAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+          };
+        }
+        return s;
+      }));
+
+    } catch (err: any) {
+      console.error(err);
+      let errMsg = "请求失败，请确保后端服务正常运行并检查本地网络连接。";
+      if (err.message === "ACCESS_CODE_REQUIRED") {
+        errMsg = "此平台已被管理员配置 APP_ACCESS_CODE 安全保护！请点击顶部导航栏上方的「已验证/验证」盾牌标志输入正确的密码。";
+        setIsAccessModalOpen(true);
+      } else {
+        errMsg = `传输错误: ${err.message}`;
+      }
+
+      setChatSessions(prev => prev.map(s => {
+        if (s.id === sessionId) {
+          return {
+            ...s,
+            messages: [
+              ...s.messages,
+              {
+                id: `error-${Date.now()}`,
+                role: "assistant",
+                content: `⚠️ **系统提示**: ${errMsg}`,
+                timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+              }
+            ]
+          };
+        }
+        return s;
+      }));
+    } finally {
+      setIsChatSending(false);
+    }
+  };
+
+  const handleCreateNewSession = () => {
+    const newId = `session-${Date.now()}`;
+    const newSession: ChatSession = {
+      id: newId,
+      title: "新开对话沙盒",
+      messages: [
+        {
+          id: `welcome-${Date.now()}`,
+          role: "assistant",
+          content: "对话沙盒已净化完成，系统就绪。请开启您的极简咨询。",
+          timestamp: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+        }
+      ],
+      model: selectedChatModel,
+      updatedAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })
+    };
+    setChatSessions([newSession, ...chatSessions]);
+    setCurrentSessionId(newId);
+  };
+
+  const handleDeleteSession = (sid: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (chatSessions.length <= 1) {
+      showToast("无法删除最后一个对话框", "info");
+      return;
+    }
+    const filtered = chatSessions.filter(s => s.id !== sid);
+    setChatSessions(filtered);
+    if (currentSessionId === sid) {
+      setCurrentSessionId(filtered[0].id);
+    }
+  };
+
+  // --- Unified Image Action ---
+  const handleDrawSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!drawPrompt.trim() || isDrawing) return;
+
+    setIsDrawing(true);
+    showToast("RONIN 绘图管线已连接，正在全力渲染中...", "info");
+
+    try {
+      const response = await fetch("/api/image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-access-code": accessCode
+        },
+        body: JSON.stringify({
+          prompt: drawPrompt,
+          model: drawModel,
+          size: drawSize
+        })
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          setIsAccessModalOpen(true);
+          throw new Error("请先完成 APP_ACCESS_CODE 访问保护验证。");
+        }
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.message || `绘图服务端出错 (HTTP ${response.status})`);
+      }
+
+      const data = await response.json();
+      
+      let finalImgUrl = "";
+      let isFallbackNotice = false;
+
+      if (data.data?.[0]?.b64_json) {
+        finalImgUrl = `data:image/png;base64,${data.data[0].b64_json}`;
+      } else if (data.data?.[0]?.url) {
+        finalImgUrl = data.data[0].url;
+        if (data.data[0].fallbackNotice) {
+          isFallbackNotice = true;
+          showToast(data.data[0].fallbackNotice, "info");
+        }
+      } else {
+        throw new Error("接口返回的图片数据为空，请重试。");
+      }
+
+      setGeneratedImages(prev => [
+        {
+          url: finalImgUrl,
+          prompt: drawPrompt,
+          timestamp: new Date().toLocaleTimeString("zh-CN"),
+          isFallback: isFallbackNotice
+        },
+        ...prev
+      ]);
+      
+      showToast("构图完毕！唯美大图已呈现。", "success");
+    } catch (err: any) {
+      showToast(err.message || "图像渲染发生了意料外的中断。", "error");
+    } finally {
+      setIsDrawing(false);
+    }
+  };
+
+  // --- Infinite Canvas Action ---
+  const addCardToCanvas = (type: "note" | "prompt" | "image", customUrl?: string) => {
+    const id = `card-${Date.now()}`;
+    const newCard: CanvasCard = {
+      id,
+      type,
+      title: type === "note" ? "📝 极速便签" : type === "prompt" ? "✍️ 灵感提示词" : "🖼️ 创作者卡片",
+      content: type === "note" ? "双击修改文本..." : type === "prompt" ? "A cinematic illustration..." : "AI 构想图",
+      x: 100 - canvasTranslate.x,
+      y: 100 - canvasTranslate.y,
+      width: 250,
+      height: type === "image" ? 280 : 140,
+      imageUrl: customUrl || (type === "image" ? "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?q=80&w=512" : undefined)
+    };
+    setCanvasCards([...canvasCards, newCard]);
+    showToast("已成功向画布添加新卡片", "success");
+  };
+
+  const deleteCanvasCard = (cid: string) => {
+    setCanvasCards(canvasCards.filter(c => c.id !== cid));
+  };
+
+  const handleCardContentChange = (cid: string, newText: string) => {
+    setCanvasCards(canvasCards.map(c => {
+      if (c.id === cid) {
+        return { ...c, content: newText };
+      }
+      return c;
+    }));
+  };
+
+  const handleCardTitleChange = (cid: string, newTitle: string) => {
+    setCanvasCards(canvasCards.map(c => {
+      if (c.id === cid) {
+        return { ...c, title: newTitle };
+      }
+      return c;
+    }));
+  };
+
+  // Canvas Mouse interactions (zoom and drag)
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    if (activeCardDrag) return;
+    if (e.target instanceof HTMLElement && e.target.closest(".canvas-card")) return;
+    setIsDraggingCanvas(true);
+    setCanvasDragStart({ x: e.clientX - canvasTranslate.x, y: e.clientY - canvasTranslate.y });
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent) => {
+    if (isDraggingCanvas) {
+      setCanvasTranslate({
+        x: e.clientX - canvasDragStart.x,
+        y: e.clientY - canvasDragStart.y
+      });
+    } else if (activeCardDrag) {
+      const { id, offsetX, offsetY } = activeCardDrag;
+      // Calculate inside current scale
+      const deltaX = e.clientX - offsetX;
+      const deltaY = e.clientY - offsetY;
+      
+      setCanvasCards(prev => prev.map(c => {
+        if (c.id === id) {
+          return {
+            ...c,
+            x: Math.round(deltaX),
+            y: Math.round(deltaY)
+          };
+        }
+        return c;
+      }));
+    }
+  };
+
+  const handleCanvasMouseUp = () => {
+    setIsDraggingCanvas(false);
+    setActiveCardDrag(null);
+  };
+
+  const handleCardDragStart = (e: React.MouseEvent, card: CanvasCard) => {
+    e.stopPropagation();
+    // Offset relative to actual page coordinate
+    setActiveCardDrag({
+      id: card.id,
+      offsetX: e.clientX - card.x,
+      offsetY: e.clientY - card.y
+    });
+    setSelectedCanvasCard(card.id);
+  };
+
+  // Canvas File Upload handle
+  const handleCanvasFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files[0]) {
+      const file = files[0];
+      setCanvasFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setCanvasFilePreview(reader.result as string);
+        showToast(`已装载参考文件: ${file.name}，可作为生图的语义引流！`, "info");
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const clearCanvasFile = () => {
+    setCanvasFile(null);
+    setCanvasFilePreview(null);
+  };
+
+  const handleCanvasInternalDraw = async () => {
+    if (!canvasPromptInput.trim()) {
+      showToast("制作画布生图前，请先写点灵感提示词", "info");
+      return;
+    }
+    showToast("画布连通 New API 中，正在向桌面输出节点...", "info");
+    
+    try {
+      const response = await fetch("/api/image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-access-code": accessCode
+        },
+        body: JSON.stringify({
+          prompt: canvasPromptInput + (canvasFile ? " (配合参考底稿)" : ""),
+          model: "gpt-image-1",
+          size: "1024x1024"
+        })
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          setIsAccessModalOpen(true);
+          throw new Error("请先验证 APP_ACCESS_CODE 访问权限");
+        }
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.message || "请求出错了");
+      }
+
+      const res = await response.json();
+      let genUrl = "";
+      if (res.data?.[0]?.b64_json) {
+        genUrl = `data:image/png;base64,${res.data[0].b64_json}`;
+      } else if (res.data?.[0]?.url) {
+        genUrl = res.data[0].url;
+      }
+
+      if (!genUrl) throw new Error("绘图未返回可读取的图片字段");
+
+      // Place a picture card exactly onto our workspace coordinates
+      const id = `card-${Date.now()}`;
+      const newCard: CanvasCard = {
+        id,
+        type: "image",
+        title: `🎨 创想: ${canvasPromptInput.slice(0, 10)}...`,
+        content: canvasPromptInput,
+        x: 250 - canvasTranslate.x,
+        y: 200 - canvasTranslate.y,
+        width: 320,
+        height: 250,
+        imageUrl: genUrl
+      };
+      setCanvasCards(prev => [...prev, newCard]);
+      setCanvasPromptInput("");
+      showToast("极品美图生成成功！已插入您当前的无线画布中央。", "success");
+
+    } catch (err: any) {
+      showToast(`画布绘图中断: ${err.message}`, "error");
+    }
+  };
+
+
+  return (
+    <div className="min-h-screen flex flex-col bg-[#f5f7fa] text-slate-800 font-sans tracking-tight">
+      
+      {/* 4px custom visual timeline decoration */}
+      <div className="h-1 w-full bg-gradient-to-r from-teal-400 via-indigo-600 to-indigo-950"></div>
+
+      {/* Exquisite Static Notifications Portal */}
+      {notification && (
+        <div className="fixed bottom-6 right-6 z-50 animate-bounce flex items-center gap-3 px-5 py-3 rounded-2xl shadow-xl bg-slate-900 border border-slate-800 text-white max-w-sm">
+          <Sparkles className="w-5 h-5 text-indigo-400" />
+          <span className="text-xs font-semibold">{notification.text}</span>
+        </div>
+      )}
+
+      {/* Main Header */}
+      <Navbar 
+        currentRoute={currentRoute} 
+        setRoute={setRoute} 
+        accessCode={accessCode}
+        onOpenAccessModal={() => setIsAccessModalOpen(true)}
+      />
+
+      {/* Primary Context Workspace Section */}
+      <main className="flex-1 flex flex-col">
+        
+        {/* ========================================================
+            一、首页 ROUTE: HOME
+            ======================================================== */}
+        {currentRoute === "home" && (
+          <div className="flex-1 flex flex-col justify-start py-8 md:py-16 px-4 max-w-7xl mx-auto w-full" id="home-route-container">
+            
+            {/* Top Minimalist Display Banner Carousels */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12 sm:mb-16">
+              
+              <div 
+                onClick={() => navigateToChat()}
+                className="group relative overflow-hidden bg-white hover:bg-slate-50 border border-slate-200/50 p-6 rounded-[22px] transition-all duration-300 cursor-pointer shadow-[0_4px_20px_rgba(0,0,0,0.015)]"
+              >
+                <div className="absolute top-0 right-0 w-24 h-24 bg-indigo-50/40 rounded-bl-full group-hover:scale-110 duration-500"></div>
+                <div className="p-3 bg-indigo-50/70 text-indigo-700 w-fit rounded-xl mb-4 group-hover:scale-105 transition-all">
+                  <Bot className="w-6 h-6" />
+                </div>
+                <h4 className="font-sans font-bold text-base text-slate-950">多模型对话智囊球</h4>
+                <p className="mt-1.5 text-xs text-slate-500 leading-relaxed">
+                  聚合 GPT-4o、Claude 及国产 DeepSeek 旗舰算力，享受一栈式闪击问答的快乐。
+                </p>
+                <div className="border-t border-slate-100 mt-4 pt-3 flex items-center justify-between text-[11px] font-bold text-indigo-600">
+                  <span>立即启动对话沙盒</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </div>
+              </div>
+
+              <div 
+                onClick={() => setRoute("image")}
+                className="group relative overflow-hidden bg-white hover:bg-slate-50 border border-slate-200/50 p-6 rounded-[22px] transition-all duration-300 cursor-pointer shadow-[0_4px_20px_rgba(0,0,0,0.015)]"
+              >
+                <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-50/40 rounded-bl-full group-hover:scale-110 duration-500"></div>
+                <div className="p-3 bg-emerald-50/70 text-emerald-700 w-fit rounded-xl mb-4 group-hover:scale-105 transition-all">
+                  <ImageIcon className="w-6 h-6" />
+                </div>
+                <h4 className="font-sans font-bold text-base text-slate-950">AI 创意绘图终端</h4>
+                <p className="mt-1.5 text-xs text-slate-500 leading-relaxed">
+                  提供 gpt-image-1 精准中文原图输出与 SD 精修，支持极致色彩与海报排字遵循。
+                </p>
+                <div className="border-t border-slate-100 mt-4 pt-3 flex items-center justify-between text-[11px] font-bold text-emerald-600">
+                  <span>立即构思画面</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </div>
+              </div>
+
+              <div 
+                onClick={() => setRoute("canvas")}
+                className="group relative overflow-hidden bg-white hover:bg-slate-50 border border-slate-200/50 p-6 rounded-[22px] transition-all duration-300 cursor-pointer shadow-[0_4px_20px_rgba(0,0,0,0.015)]"
+              >
+                <div className="absolute top-0 right-0 w-24 h-24 bg-amber-50/40 rounded-bl-full group-hover:scale-110 duration-500"></div>
+                <div className="p-3 bg-amber-50/70 text-amber-700 w-fit rounded-xl mb-4 group-hover:scale-105 transition-all">
+                  <Layers className="w-6 h-6" />
+                </div>
+                <h4 className="font-sans font-bold text-base text-slate-950">创作者无限画布</h4>
+                <p className="mt-1.5 text-xs text-slate-500 leading-relaxed">
+                  非线性白板工作空间。将灵感、提示词、附件原件和 AI生图进行无缝编排连线。
+                </p>
+                <div className="border-t border-slate-100 mt-4 pt-3 flex items-center justify-between text-[11px] font-bold text-amber-600">
+                  <span>转入创作白板</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </div>
+              </div>
+
+            </div>
+
+            {/* Central Master Title (Anti-Hype, Elegant branding) */}
+            <div className="text-center mb-10 max-w-2xl mx-auto">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-widest bg-gradient-to-r from-indigo-500/10 to-indigo-600/10 text-indigo-700 mb-4 border border-indigo-200/30">
+                <Sparkles className="w-3 h-3 text-indigo-600 animate-spin" style={{ animationDuration: '3s' }} /> 
+                可商用 AI SaaS 聚合站
+              </span>
+              <h1 className="text-3xl sm:text-5xl font-sans font-extrabold text-slate-950 tracking-tight leading-tight">
+                一个更适合牛马的 <br />
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-slate-900 via-indigo-600 to-indigo-950">
+                  AI 生产力工作台
+                </span>
+              </h1>
+              <p className="mt-4 text-xs sm:text-sm text-slate-500 leading-relaxed max-w-lg mx-auto">
+                集成高精多模型对话、图像生成、直觉式无限白板与商业 API 网关一代理，摒弃花哨、回归干净体验。
+              </p>
+            </div>
+
+            {/* Main Center Prompter Box Component */}
+            <div className="w-full max-w-3xl mx-auto bg-white rounded-[26px] border border-slate-200/70 p-5 shadow-[0_12px_40px_rgba(0,0,0,0.02)] mb-8">
+              <div className="flex flex-wrap items-center justify-between gap-2.5 pb-4 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-slate-400">选择当前问答模型:</span>
+                  <select 
+                    value={selectedChatModel}
+                    onChange={(e) => setSelectedChatModel(e.target.value)}
+                    className="text-xs font-bold text-indigo-700 bg-indigo-50/70 px-3 py-1.5 rounded-lg border border-transparent focus:border-indigo-300 outline-none cursor-pointer"
+                  >
+                    <option value="gpt-4o-mini">GPT-4o-mini (推荐/日常)</option>
+                    <option value="gpt-4o">GPT-4o (精细化)</option>
+                    <option value="deepseek-v3">DeepSeek-V3 (超平价)</option>
+                    <option value="claude-3-5-sonnet">Claude 3.5 Sonnet (编程高手)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span className="text-[11px] text-slate-400 font-semibold">New API 接入状态: 良好</span>
+                </div>
+              </div>
+
+              {/* Huge Quick Input field (Redirects and triggers automatically on submit) */}
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (chatInputText.trim()) {
+                  navigateToChat(chatInputText, selectedChatModel);
+                  setChatInputText("");
+                }
+              }} className="pt-4">
+                <div className="relative">
+                  <textarea
+                    rows={3}
+                    placeholder="问问 RONIN AI LAB（例如：帮我起草一份高端咖啡店的创意营销方案）..."
+                    value={chatInputText}
+                    onChange={(e) => setChatInputText(e.target.value)}
+                    className="w-full text-sm placeholder-slate-400 bg-transparent text-slate-800 outline-none resize-none pr-12 focus:ring-0"
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        if (chatInputText.trim()) {
+                          navigateToChat(chatInputText, selectedChatModel);
+                          setChatInputText("");
+                        }
+                      }
+                    }}
+                  />
+                  <div className="absolute bottom-1 right-1 flex gap-2">
+                    <button
+                      type="submit"
+                      className="p-3 bg-indigo-600 hover:bg-slate-900 text-white rounded-2xl shadow-sm transition group"
+                    >
+                      <Send className="w-4 h-4 group-hover:translate-x-0.5 duration-200" />
+                    </button>
+                  </div>
+                </div>
+              </form>
+
+              {/* Lower feature pills tag bar */}
+              <div className="flex flex-wrap gap-2.5 pt-4 border-t border-slate-50 text-[11px] text-slate-400">
+                <span className="font-semibold self-center">快速指令配给:</span>
+                <button 
+                  onClick={() => navigateToChat("帮我深度联网搜索并整理近一季度人工智能中转平台的市场主流报价，以 Markdown 报表返回。", selectedChatModel)}
+                  className="px-2.5 py-1 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 border border-slate-200/50 rounded-lg"
+                >
+                  🌐 联网检索模式
+                </button>
+                <button 
+                  onClick={() => { setRoute("image"); setDrawPrompt("生成一张黑金风格高科技折片海报"); }}
+                  className="px-2.5 py-1 bg-slate-50 hover:bg-emerald-50 hover:text-emerald-600 border border-slate-200/50 rounded-lg"
+                >
+                  🎨 唤醒生图工作流
+                </button>
+                <button 
+                  onClick={() => navigateToChat("请帮我进行文案提示词优化，我的受众是青年群体，以下是我的底稿：...", selectedChatModel)}
+                  className="px-2.5 py-1 bg-slate-50 hover:bg-amber-50 hover:text-amber-600 border border-slate-200/50 rounded-lg"
+                >
+                  📝 提示词自动降噪
+                </button>
+              </div>
+            </div>
+
+            {/* Ready-made sample prompt block triggers */}
+            <div className="w-full max-w-3xl mx-auto mb-16">
+              <span className="block text-xs font-bold text-slate-400 mb-3 text-center sm:text-left">
+                💡 快速灵感对撞示例（点击即可免配置直达对话）
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                {QUICK_PROMPTS.map((qp, idx) => (
+                  <div
+                    key={idx}
+                    onClick={() => navigateToChat(qp.prompt, selectedChatModel)}
+                    className="p-4 bg-white hover:bg-indigo-50/20 border border-slate-200/40 rounded-2xl cursor-pointer hover:border-indigo-400/50 transition duration-200 group"
+                  >
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-xs font-bold text-slate-800">{qp.title}</h5>
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-300 group-hover:text-indigo-500 duration-200" />
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500 leading-normal line-clamp-1">
+                      {qp.desc}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Footer Capabilities overview Grid */}
+            <div className="border-t border-slate-200/60 pt-12 text-center pb-8">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6">
+                RONIN AI LAB 的四大底层核心基石
+              </h3>
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 max-w-5xl mx-auto">
+                <div className="flex flex-col items-center">
+                  <div className="w-10 h-10 rounded-xl bg-slate-200/50 text-slate-700 flex items-center justify-center mb-3">
+                    <Bot className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-900">100% 连通 Native API</span>
+                  <span className="text-[10px] text-slate-400 mt-1">杜绝套壳缓存，毫秒级快速握手响应</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div className="w-10 h-10 rounded-xl bg-slate-200/50 text-slate-700 flex items-center justify-center mb-3">
+                    <Code className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-900">全面对齐 OpenAI 契约</span>
+                  <span className="text-[10px] text-slate-400 mt-1">支持常见第三方客户端即插即用</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div className="w-10 h-10 rounded-xl bg-slate-200/50 text-slate-700 flex items-center justify-center mb-3">
+                    <Shield className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-900">数据端到端高级保密</span>
+                  <span className="text-[10px] text-slate-400 mt-1">非对称会话链路安全，对隐私极度考究</span>
+                </div>
+                <div className="flex flex-col items-center">
+                  <div className="w-10 h-10 rounded-xl bg-slate-200/50 text-slate-700 flex items-center justify-center mb-3">
+                    <Activity className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-900">高并发边缘智能代理</span>
+                  <span className="text-[10px] text-slate-400 mt-1">专线优化多路负载，无损流式输出</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+
+        {/* ========================================================
+            二、AI 对话页面 ROUTE: CHAT
+            ======================================================== */}
+        {currentRoute === "chat" && (
+          <div className="flex-1 flex flex-col md:flex-row h-[calc(100vh-4.25rem)] overflow-hidden">
+            
+            {/* Left sidebar: Dialogue History Records */}
+            <aside className="w-full md:w-64 bg-slate-50 border-r border-slate-200 flex flex-col shrink-0">
+              <div className="p-4 border-b border-slate-200">
+                <button
+                  onClick={handleCreateNewSession}
+                  id="new-chat-session-btn"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-slate-900 rounded-xl transition shadow-sm"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>新建对话信道</span>
+                </button>
+              </div>
+
+              {/* Chat Session Scroll area */}
+              <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                <span className="px-3 py-1.5 block text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
+                  历史会话缓存 ({chatSessions.length})
+                </span>
+                {chatSessions.map((session) => (
+                  <div
+                    key={session.id}
+                    onClick={() => setCurrentSessionId(session.id)}
+                    className={`group flex items-center justify-between p-3 rounded-xl cursor-pointer transition text-xs ${
+                      session.id === currentSessionId
+                        ? "bg-white border border-slate-200 shadow-sm text-indigo-700 font-semibold"
+                        : "text-slate-600 hover:bg-slate-200/50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 overflow-hidden mr-2">
+                      <Clock className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+                      <span className="truncate">{session.title}</span>
+                    </div>
+                    <button
+                      onClick={(e) => handleDeleteSession(session.id, e)}
+                      className="p-1 rounded opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-500 hover:bg-slate-100 transition whitespace-nowrap"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Sidebar bottom indicator */}
+              <div className="p-4 border-t border-slate-200 text-[10px] text-slate-400 bg-slate-100/50">
+                <span className="block font-bold">💡 存储提示:</span>
+                历史会话仅缓存于您本地的浏览器本地存储中，保证隐私安全。
+              </div>
+            </aside>
+
+            {/* Chat screen panel */}
+            <section className="flex-1 flex flex-col bg-white">
+              <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                <div className="flex items-center gap-2">
+                  <span className="p-1.5 rounded-lg bg-indigo-50 text-indigo-700">
+                    <Cpu className="w-4 h-4 text-indigo-600" />
+                  </span>
+                  <div>
+                    <h2 className="text-xs font-bold text-slate-900">
+                      {chatSessions.find(s => s.id === currentSessionId)?.title || "新开对话沙盒"}
+                    </h2>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">
+                      端到端高速网关代理直连：ai.ronin77.xyz
+                    </span>
+                  </div>
+                </div>
+
+                {/* Switcher in Chat Header */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-slate-500 font-semibold">模型:</span>
+                  <select
+                    value={selectedChatModel}
+                    onChange={(e) => {
+                      const modelVal = e.target.value;
+                      setSelectedChatModel(modelVal);
+                      setChatSessions(prev => prev.map(s => {
+                        if (s.id === currentSessionId) {
+                          return { ...s, model: modelVal };
+                        }
+                        return s;
+                      }));
+                      showToast(`已成功将本轮会话模型切换为 ${modelVal}`, "info");
+                    }}
+                    className="text-xs font-bold text-slate-700 bg-white border border-slate-200 px-2.5 py-1.5 rounded-lg outline-none cursor-pointer"
+                  >
+                    <option value="gpt-4o-mini">GPT-4o-mini (推荐)</option>
+                    <option value="gpt-4o">GPT-4o旗舰版</option>
+                    <option value="deepseek-v3">DeepSeek-V3</option>
+                    <option value="deepseek-r1">DeepSeek-R1 (思考模型)</option>
+                    <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Scroll Messages Box */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                {chatSessions.find(s => s.id === currentSessionId)?.messages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className={`flex gap-3 max-w-4xl mx-auto ${msg.role === "user" ? "flex-row-reverse" : ""}`}
+                  >
+                    <div className={`p-2.5 rounded-2xl h-10 w-10 flex items-center justify-center shrink-0 border ${
+                      msg.role === "user" 
+                        ? "bg-slate-900 border-slate-950 text-white" 
+                        : "bg-indigo-50 border-indigo-100 text-indigo-700"
+                    }`}>
+                      {msg.role === "user" ? <User className="w-5 h-5" /> : <Bot className="w-5 h-5 text-indigo-600" />}
+                    </div>
+
+                    <div className="flex flex-col space-y-1 max-w-[80%]">
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400">
+                        <span className="font-bold">{msg.role === "user" ? "您" : "RONIN 助理"}</span>
+                        <span>•</span>
+                        <span>{msg.timestamp}</span>
+                      </div>
+                      
+                      {/* Message Content render */}
+                      <div className={`p-4 rounded-[20px] text-xs leading-relaxed border shadow-sm ${
+                        msg.role === "user"
+                          ? "bg-indigo-600/5 text-slate-900 border-indigo-200/50"
+                          : "bg-slate-50 text-slate-800 border-slate-200/70"
+                      }`}>
+                        
+                        {/* Simply parsing newlines or simple bold code snippets */}
+                        {msg.content.split("\n").map((para, pIdx) => {
+                          if (para.startsWith("###")) {
+                            return <h3 key={pIdx} className="text-xs font-extrabold text-slate-950 mt-3 mb-1.5">{para.replace("###", "")}</h3>;
+                          }
+                          if (para.startsWith("* **")) {
+                            return <p key={pIdx} className="text-xs my-1 pl-2 border-l-2 border-indigo-300">💡 {para.substring(2)}</p>;
+                          }
+                          if (para.includes("`") && para.indexOf("`") !== para.lastIndexOf("`")) {
+                            return (
+                              <p key={pIdx} className="my-1.5">
+                                {para.split("`").map((chunk, cIdx) => 
+                                  cIdx % 2 === 1 ? (
+                                    <code key={cIdx} className="px-1 py-0.5 rounded bg-amber-100 text-amber-800 font-mono font-semibold">{chunk}</code>
+                                  ) : chunk
+                                )}
+                              </p>
+                            );
+                          }
+                          return <p key={pIdx} className={para.trim() === "" ? "h-2" : "my-1"}>{para}</p>;
+                        })}
+
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {isChatSending && (
+                  <div className="flex gap-3 max-w-4xl mx-auto">
+                    <div className="p-2.5 rounded-2xl h-10 w-10 bg-indigo-50 text-indigo-700 flex items-center justify-center shrink-0 border border-indigo-100">
+                      <Bot className="w-5 h-5 text-indigo-600 animate-spin" />
+                    </div>
+                    <div className="flex flex-col space-y-1">
+                      <span className="text-[10px] text-slate-400 font-bold">RONIN 助理 正在极速思考并组装回答...</span>
+                      <div className="px-4 py-3 rounded-2xl border bg-slate-50 border-slate-200 text-xs flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                        <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                        <span className="w-1.5 h-1.5 bg-indigo-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                <div ref={chatBottomRef} />
+              </div>
+
+              {/* Chat send text form */}
+              <div className="p-4 border-t border-slate-100 bg-slate-50/50">
+                <div className="max-w-4xl mx-auto">
+                  <form onSubmit={handleChatSend} className="relative flex items-center">
+                    <input
+                      type="text"
+                      value={chatInputText}
+                      onChange={(e) => setChatInputText(e.target.value)}
+                      placeholder={`使用 ${selectedChatModel} 向 RONIN AI 提问... 按 Enter 发送`}
+                      className="w-full pl-4 pr-12 py-3 text-xs bg-white text-slate-800 border border-slate-200/80 rounded-2xl focus:outline-none focus:border-indigo-600"
+                      disabled={isChatSending}
+                    />
+                    <button
+                      type="submit"
+                      disabled={isChatSending || !chatInputText.trim()}
+                      className="absolute right-2 p-2 bg-indigo-600 hover:bg-slate-900 text-white rounded-xl transition disabled:opacity-40 disabled:hover:bg-indigo-600"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                    </button>
+                  </form>
+                  <p className="mt-2 text-center text-[10px] text-slate-400">
+                    * 对话链路将统一上行至代理端，数据绝对隔离，完全适配可商业化的 New API 网关。
+                  </p>
+                </div>
+              </div>
+
+            </section>
+          </div>
+        )}
+
+
+        {/* ========================================================
+            三、AI 绘画页面 ROUTE: IMAGE
+            ======================================================== */}
+        {currentRoute === "image" && (
+          <div className="flex-1 flex flex-col md:flex-row h-[calc(100vh-4.25rem)] overflow-hidden" id="draw-route-container">
+            
+            {/* Left panels adjustments */}
+            <aside className="w-full md:w-80 bg-slate-50 border-r border-slate-200 p-5 overflow-y-auto flex flex-col justify-between shrink-0">
+              
+              <div className="space-y-6">
+                <div>
+                  <h3 className="text-xs font-extrabold text-slate-900 flex items-center gap-2 tracking-wide uppercase">
+                    <Sliders className="w-4 h-4 text-emerald-600" />
+                    <span>绘图参数配置中心</span>
+                  </h3>
+                  <div className="h-[1px] bg-slate-200 my-3"></div>
+                </div>
+
+                <form onSubmit={handleDrawSubmit} className="space-y-4">
+                  {/* Prompt Textarea */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      原厂中文词/提示词汇 (Prompt)
+                    </label>
+                    <textarea
+                      rows={4}
+                      value={drawPrompt}
+                      onChange={(e) => setDrawPrompt(e.target.value)}
+                      placeholder="例如：黑金风格的奢华咖啡杯处于反光的太空金属地表上，冷色调主光，写实，3D材质感强烈..."
+                      className="w-full p-3 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 text-slate-800"
+                      required
+                    />
+                    <span className="block text-[10px] text-slate-400 mt-1">
+                      * 支持直接键入中文，模型将进行语义降噪与智能拓写。
+                    </span>
+                  </div>
+
+                  {/* Model Choice */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      选择AI意境图大模型
+                    </label>
+                    <select
+                      value={drawModel}
+                      onChange={(e) => setDrawModel(e.target.value)}
+                      className="w-full p-2.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none"
+                    >
+                      <option value="gpt-image-1">gpt-image-1 (精细排版/黑金高光设计)</option>
+                      <option value="stable-diffusion-3">Stable Diffusion 3.5 (写实插画)</option>
+                    </select>
+                  </div>
+
+                  {/* Size Choice */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                      输出像素分辨率(Size)
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { size: "1024x1024", label: "1:1 方形大图" },
+                        { size: "16:9", label: "高端横版海报" }, 
+                      ].map((item) => (
+                        <button
+                          key={item.size}
+                          type="button"
+                          onClick={() => setDrawSize(item.size)}
+                          className={`p-2.5 text-xs border rounded-xl font-medium transition ${
+                            drawSize === item.size
+                              ? "border-emerald-500 bg-emerald-50/50 text-emerald-700 font-bold"
+                              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Submitting Button */}
+                  <button
+                    type="submit"
+                    disabled={isDrawing}
+                    id="trigger-render-btn"
+                    className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-xs font-bold text-white bg-slate-950 hover:bg-indigo-950 transition shadow-md disabled:bg-slate-400 duration-200"
+                  >
+                    <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>{isDrawing ? "画面构件搭建中..." : "启动高精图片渲染"}</span>
+                  </button>
+                </form>
+              </div>
+
+              {/* Bottom notice pricing warning */}
+              <div className="mt-8 p-3 rounded-xl bg-slate-100 border border-slate-200 text-[10px] text-slate-400">
+                <span className="block font-bold mb-1">⚖️ 商业记账提示</span>
+                单张 1024 像素渲染直接连接 New API \`/v1/images/generations\` 特惠渠道扣除 0.12 元/张。无需购买官方昂贵 API，更贴合出海牛马商业需求。
+              </div>
+
+            </aside>
+
+            {/* Right panel: Images visual output */}
+            <section className="flex-1 bg-slate-100 p-6 overflow-y-auto">
+              
+              {/* Header inside result section */}
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h2 className="text-sm font-extrabold text-slate-900">
+                    创意画面陈列区
+                  </h2>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    展示本轮所提交并成功生成的画卷卡片大图。
+                  </p>
+                </div>
+                
+                <span className="text-[11px] text-slate-400 font-semibold bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
+                  当前渲染完成数: {generatedImages.length}
+                </span>
+              </div>
+
+              {/* Loader widget */}
+              {isDrawing && (
+                <div className="p-8 bg-white rounded-3xl border border-slate-200/60 shadow-sm flex flex-col items-center justify-center text-center max-w-lg mx-auto mb-6 animate-pulse">
+                  <div className="h-10 w-10 flex items-center justify-center rounded-full bg-emerald-50 text-emerald-600 mb-3">
+                    <Activity className="w-5 h-5 text-emerald-600 animate-spin" />
+                  </div>
+                  <h4 className="text-xs font-extrabold text-slate-900">
+                    正在执行图像网关生成序列
+                  </h4>
+                  <p className="text-[11px] text-slate-400 max-w-xs mt-1">
+                    系统正向你的 New API 端点安全上报，该过程通常需要 10-15 秒以返回超清像素图像。请稍等。
+                  </p>
+                </div>
+              )}
+
+              {/* Images Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pb-12">
+                {generatedImages.map((img, idx) => (
+                  <div 
+                    key={idx}
+                    className="bg-white rounded-[24px] overflow-hidden border border-slate-200/60 shadow-[0_4px_24px_rgba(0,0,0,0.01)] group"
+                  >
+                    
+                    {/* Visual container */}
+                    <div className="relative aspect-square overflow-hidden bg-slate-900 flex items-center justify-center">
+                      <img 
+                        src={img.url} 
+                        alt={img.prompt}
+                        className="w-full h-full object-cover group-hover:scale-105 duration-700"
+                      />
+                      
+                      {/* Notice Overlay if fallbacked */}
+                      {img.isFallback && (
+                        <div className="absolute top-2.5 left-2.5 right-2.5 p-2 rounded-xl bg-amber-950/80 text-amber-100 text-[10px] font-semibold flex gap-2 items-start backdrop-blur-xs">
+                          <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                          <span>未在本地配置 NEWAPI_KEY，已启动高保真样本图以供测试体验。</span>
+                        </div>
+                      )}
+
+                      {/* Hover action download cards */}
+                      <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition duration-300 flex items-center justify-center gap-2">
+                        <a 
+                          href={img.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-2.5 bg-white hover:bg-slate-100 text-slate-950 rounded-full shadow-lg transition"
+                          title="在新网页中查看大原图"
+                        >
+                          <Maximize2 className="w-4 h-4" />
+                        </a>
+                      </div>
+                    </div>
+
+                    {/* Metadata Footer bar */}
+                    <div className="p-4 bg-white">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 text-slate-500 text-[9px] font-bold">
+                        {img.timestamp}
+                      </span>
+                      <h4 className="font-sans font-bold text-xs text-slate-900 mt-2">
+                        提示词:
+                      </h4>
+                      <p className="mt-1 text-[11px] text-slate-500 leading-normal line-clamp-2">
+                        {img.prompt}
+                      </p>
+                    </div>
+
+                  </div>
+                ))}
+              </div>
+
+            </section>
+          </div>
+        )}
+
+
+        {/* ========================================================
+            四、无限画布页面 ROUTE: CANVAS
+            ======================================================== */}
+        {currentRoute === "canvas" && (
+          <div className="flex-1 flex flex-col h-[calc(100vh-4.25rem)] overflow-hidden">
+            
+            {/* Top Command Control bar */}
+            <div className="bg-white border-b border-slate-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              
+              <div className="flex items-center gap-3">
+                <span className="p-1.5 rounded-lg bg-amber-50 text-amber-700">
+                  <Layers className="w-4 h-4 text-amber-600" />
+                </span>
+                <div>
+                  <h2 className="text-xs font-bold text-slate-900">
+                    创意无限编排画布 & 创作工作流
+                  </h2>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">
+                    拖动卡片顶部或空白画布来重新布局，画布内的生图将自动融入。
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Toolbar to append nodes */}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => addCardToCanvas("note")}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-slate-100 hover:bg-slate-200/80 text-slate-700 font-semibold transition"
+                >
+                  <StickyNote className="w-3.5 h-3.5 text-amber-600" />
+                  <span>添加灵感便签</span>
+                </button>
+                <button
+                  onClick={() => addCardToCanvas("prompt")}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-slate-100 hover:bg-slate-200/80 text-slate-700 font-semibold transition"
+                >
+                  <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>添加提示词卡</span>
+                </button>
+                <button
+                  onClick={() => addCardToCanvas("image")}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-slate-100 hover:bg-slate-200/80 text-slate-700 font-semibold transition"
+                >
+                  <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>画幅占位格</span>
+                </button>
+
+                <div className="h-4 w-[1px] bg-slate-200 mx-1"></div>
+
+                {/* Clear and Scale reset */}
+                <button
+                  onClick={() => {
+                    setCanvasTranslate({ x: 0, y: 0 });
+                    setCanvasScale(1);
+                    showToast("画布缩放平移参数已归位", "info");
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-100 text-slate-500 transition font-semibold"
+                >
+                  复位视口
+                </button>
+              </div>
+
+            </div>
+
+            {/* Canvas Main Area Workspace */}
+            <div className="flex-1 flex flex-col md:flex-row relative bg-slate-100 overflow-hidden">
+              
+              {/* Left sidebar inside canvas: Quick generator */}
+              <div className="w-full md:w-80 bg-white border-b md:border-b-0 md:border-r border-slate-200 p-4 shrink-0 flex flex-col justify-between z-10">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 block">
+                      ⚡ 画布直达生图引擎
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-bold">gpt-image-1</span>
+                  </div>
+
+                  {/* Canvas Prompt */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                      输入您的写画指令
+                    </label>
+                    <textarea
+                      rows={3}
+                      value={canvasPromptInput}
+                      onChange={(e) => setCanvasPromptInput(e.target.value)}
+                      placeholder="写几行极速创意（例如：太空舱概念透视，荧光绿质感）..."
+                      className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
+                    />
+                  </div>
+
+                  {/* Reference Attachment upload widget */}
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 mb-1.5 flex items-center justify-between">
+                      <span>已加载的参考附件 / 图片 (可选)</span>
+                      {canvasFile && (
+                        <button onClick={clearCanvasFile} className="text-[9px] text-rose-500 uppercase font-bold hover:underline">
+                          清除
+                        </button>
+                      )}
+                    </label>
+                    
+                    {!canvasFilePreview ? (
+                      <div className="border border-dashed border-slate-300 rounded-xl p-4 bg-slate-50 hover:bg-slate-100/50 transition relative text-center">
+                        <input
+                          type="file"
+                          accept="image/*,.pdf"
+                          onChange={handleCanvasFileChange}
+                          className="absolute inset-0 opacity-0 cursor-pointer"
+                        />
+                        <FileUp className="w-6 h-6 text-slate-400 mx-auto mb-1.5" />
+                        <span className="block text-[10px] text-slate-500 font-medium">
+                          拖入或点击上传图片/PDF文件参考物
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="relative rounded-xl overflow-hidden border border-slate-200 p-1.5 bg-slate-50">
+                        <img src={canvasFilePreview} className="w-full h-24 object-cover rounded-lg" alt="Attachment" />
+                        <div className="p-1 mt-1 flex items-center justify-between text-[10px] text-slate-500">
+                          <span className="truncate max-w-[150px] font-mono">{canvasFile?.name}</span>
+                          <span className="font-bold text-emerald-600 shrink-0">已装载</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Quick generate to canvas */}
+                  <button
+                    onClick={handleCanvasInternalDraw}
+                    className="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-slate-900 transition shadow-sm"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>合成并输出至画布</span>
+                  </button>
+                </div>
+
+                <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-100/40 text-[10px] text-indigo-800 leading-normal mt-4">
+                  <span className="font-bold block mb-0.5">🎓 创作者提示:</span>
+                  此处支持极具设计前瞻性的「画笔参考输入」，上传文件后，New API 在接收请求时将同步整合。
+                </div>
+              </div>
+
+              {/* Real Interactive Infinite-Canvas Grid container */}
+              <div 
+                ref={canvasRef}
+                className="flex-1 h-full relative cursor-grab active:cursor-grabbing overflow-hidden"
+                onMouseDown={handleCanvasMouseDown}
+                onMouseMove={handleCanvasMouseMove}
+                onMouseUp={handleCanvasMouseUp}
+                onMouseLeave={handleCanvasMouseUp}
+              >
+                
+                {/* Visual grid repeating indicator */}
+                <div 
+                  className="absolute inset-0 bg-slate-100 pointer-events-none"
+                  style={{
+                    backgroundImage: `radial-gradient(#cbd5e1 1.2px, transparent 1.2px)`,
+                    backgroundSize: `${24 * canvasScale}px ${24 * canvasScale}px`,
+                    backgroundPosition: `${canvasTranslate.x}px ${canvasTranslate.y}px`
+                  }}
+                />
+
+                {/* Transform Scaler/Translator coordinate engine system */}
+                <div 
+                  className="absolute"
+                  style={{
+                    transform: `translate(${canvasTranslate.x}px, ${canvasTranslate.y}px) scale(${canvasScale})`,
+                    transformOrigin: "0 0"
+                  }}
+                >
+                  
+                  {canvasCards.map((card) => {
+                    const isSelected = selectedCanvasCard === card.id;
+                    
+                    return (
+                      <div
+                        key={card.id}
+                        className={`absolute canvas-card bg-white rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] border-2 transition-shadow duration-150 ${
+                          isSelected ? "border-indigo-600 shadow-md" : "border-slate-200"
+                        }`}
+                        style={{
+                          left: card.x,
+                          top: card.y,
+                          width: card.width,
+                          minHeight: card.height
+                        }}
+                      >
+
+                        {/* Card Header drag handle bar */}
+                        <div 
+                          onMouseDown={(e) => handleCardDragStart(e, card)}
+                          className={`px-3 py-2 border-b rounded-t-2xl flex items-center justify-between cursor-move text-[11px] font-bold ${
+                            card.type === "note" 
+                              ? "bg-amber-50 text-amber-800 border-amber-100" 
+                              : card.type === "prompt"
+                                ? "bg-indigo-50/50 text-indigo-800 border-indigo-100"
+                                : "bg-emerald-50 text-emerald-800 border-emerald-100"
+                          }`}
+                        >
+                          <span className="flex items-center gap-1 truncate">
+                            <Move className="w-3 h-3 text-slate-400 shrink-0" />
+                            <input 
+                              type="text" 
+                              value={card.title}
+                              onChange={(e) => handleCardTitleChange(card.id, e.target.value)}
+                              className="bg-transparent border-none font-bold text-[11px] focus:outline-none focus:ring-0 focus:underline w-full"
+                            />
+                          </span>
+                          <button
+                            onClick={() => deleteCanvasCard(card.id)}
+                            className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {/* Card Content body with textarea */}
+                        <div className="p-3">
+                          
+                          {/* Image rendering inside image type note */}
+                          {card.imageUrl && (
+                            <div className="relative rounded-lg overflow-hidden bg-slate-900 border mb-2 aspect-video">
+                              <img src={card.imageUrl} alt={card.title} className="w-full h-full object-cover" />
+                            </div>
+                          )}
+
+                          <textarea
+                            value={card.content}
+                            onChange={(e) => handleCardContentChange(card.id, e.target.value)}
+                            rows={card.type === "image" ? 2 : 5}
+                            className="w-full text-xs text-slate-600 bg-transparent border-none focus:ring-0 resize-none outline-none leading-relaxed"
+                            placeholder="写点什么..."
+                          />
+                        </div>
+
+                      </div>
+                    );
+                  })}
+
+                </div>
+
+                {/* Upper visual scale zoom widget absolute to viewer */}
+                <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-md px-3 py-2 rounded-xl shadow-lg border border-slate-200/50 flex items-center gap-2.5 text-xs font-bold z-10">
+                  <button 
+                    onClick={() => setCanvasScale(Math.max(0.5, canvasScale - 0.1))}
+                    className="p-1 rounded hover:bg-slate-100 text-slate-600 font-extrabold"
+                  >
+                    －
+                  </button>
+                  <span className="text-[11px] tracking-tight">{Math.round(canvasScale * 100)}%</span>
+                  <button 
+                    onClick={() => setCanvasScale(Math.min(2, canvasScale + 0.1))}
+                    className="p-1 rounded hover:bg-slate-100 text-slate-600 font-extrabold"
+                  >
+                    ＋
+                  </button>
+                </div>
+
+              </div>
+
+            </div>
+
+          </div>
+        )}
+
+
+        {/* ========================================================
+            五、模型广场页面 ROUTE: MODELS
+            ======================================================== */}
+        {currentRoute === "models" && (
+          <div className="flex-1 py-10 px-4 max-w-7xl mx-auto w-full" id="models-route-container">
+            
+            {/* Minimal banner headers */}
+            <div className="mb-10 text-center sm:text-left">
+              <h2 className="text-2xl font-extrabold text-slate-950">智能大模型广场</h2>
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                RONIN AI LAB 的核心中转负载均衡，全面支持以下静态公开模型，API 全球通用，响应一致。
+              </p>
+            </div>
+
+            {/* Sub Filter Category tab buttons */}
+            <div className="flex flex-wrap items-center gap-2 mb-8" id="models-tab-bar">
+              {["全部", "GPT系列", "Claude系列", "DeepSeek系列", "Gemini系列", "AI 图像模型"].map((cat) => (
+                <button
+                  key={cat}
+                  onClick={() => setSelectedModelCategory(cat)}
+                  className={`px-4 py-2 rounded-full text-xs font-medium transition ${
+                    selectedModelCategory === cat
+                      ? "bg-indigo-600 text-white font-bold shadow-md shadow-indigo-100"
+                      : "bg-white hover:bg-slate-100 text-slate-700 border border-slate-200"
+                  }`}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+
+            {/* Model Card listings Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {APP_MODELS.filter(m => selectedModelCategory === "全部" || m.category === selectedModelCategory).map((m) => (
+                <div
+                  key={m.id}
+                  className="bg-white rounded-[24px] border border-slate-200 p-6 flex flex-col justify-between hover:shadow-[0_8px_30px_rgba(0,0,0,0.02)] transition duration-200"
+                >
+                  <div>
+                    {/* Header tags and provider name */}
+                    <div className="flex items-center justify-between mb-4">
+                      <span className="text-[10px] uppercase font-mono tracking-widest text-slate-400 font-extrabold">
+                        {m.provider}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        {m.tags.map((tg, idx) => (
+                          <span 
+                            key={idx}
+                            className="bg-indigo-50 text-indigo-700 text-[9px] font-bold px-2 py-0.5 rounded"
+                          >
+                            {tg}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <h3 className="font-sans font-extrabold text-lg text-slate-950 mb-1.5 flex items-center gap-2">
+                      <Cpu className="w-4 h-4 text-indigo-600" />
+                      <span>{m.name}</span>
+                    </h3>
+                    <p className="text-[11px] text-slate-500 leading-normal mb-4">
+                      {m.description}
+                    </p>
+
+                    <div className="bg-slate-50 rounded-xl p-3 border border-slate-100 mb-4 space-y-2 text-[11px]">
+                      <div>
+                        <span className="font-bold text-slate-400 block uppercase tracking-widest text-[9px]">适合任务</span>
+                        <span className="text-slate-700 font-semibold">{m.suitedFor}</span>
+                      </div>
+                      <div>
+                        <span className="font-bold text-slate-400 block uppercase tracking-widest text-[9px]">上下文约束</span>
+                        <span className="text-slate-600 max-w-fit font-semibold px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-100">{m.contextLimit}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    {/* Pricing tag indicator */}
+                    <div className="text-[10px] font-bold text-indigo-600 bg-indigo-50/50 p-2.5 rounded-xl border border-indigo-200/20 mb-4 text-center">
+                      {m.priceTag}
+                    </div>
+
+                    {/* Submit CTA */}
+                    <button
+                      onClick={() => {
+                        if (m.category === "AI 图像模型") {
+                          setRoute("image");
+                          setDrawModel(m.id);
+                        } else {
+                          navigateToChat(`您好！让我们使用全新的 ${m.name} 探索智能工作边界。`, m.id);
+                        }
+                      }}
+                      className="w-full py-2.5 rounded-xl bg-slate-950 hover:bg-indigo-600 text-white text-xs font-bold transition flex items-center justify-center gap-1.5"
+                    >
+                      <span>部署并即刻调用</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                </div>
+              ))}
+            </div>
+
+          </div>
+        )}
+
+
+        {/* ========================================================
+            六、API 购买页面 ROUTE: PRICING
+            ======================================================== */}
+        {currentRoute === "pricing" && (
+          <div className="flex-1 py-12 px-4 max-w-7xl mx-auto w-full" id="pricing-route-container">
+            
+            {/* Header copy pricing plans */}
+            <div className="text-center mb-12 max-w-xl mx-auto">
+              <span className="inline-flex px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-widest bg-emerald-100 text-emerald-800 mb-3">
+                商业化付费算力
+              </span>
+              <h2 className="text-2xl sm:text-4xl font-sans font-extrabold text-slate-950">
+                无任何隐藏订阅费的积分套餐
+              </h2>
+              <p className="text-xs text-slate-500 mt-2 leading-relaxed">
+                无需购买昂贵且充值复杂的外国代付信用卡。我们的算力积分终身不变，并享有 100% 同步原厂接口安全保证。
+              </p>
+            </div>
+
+            {/* Plans List Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">
+              {PRICING_PLANS.map((plan) => (
+                <div
+                  key={plan.id}
+                  className={`relative bg-white rounded-[26px] border p-6 flex flex-col justify-between hover:-translate-y-1 transform transition duration-300 ${
+                    plan.isPopular 
+                      ? "border-indigo-600 shadow-[0_12px_45px_rgba(79,70,229,0.06)]" 
+                      : "border-slate-200 shadow-sm"
+                  }`}
+                >
+                  
+                  {/* Popular tag badge inside top margin */}
+                  {plan.isPopular && (
+                    <span className="absolute top-0 right-6 translate-y-[-50%] bg-indigo-600 text-[10px] font-extrabold tracking-widest uppercase text-white px-3.5 py-1 rounded-full shadow-md">
+                      🔥🔥 爆款力荐款
+                    </span>
+                  )}
+
+                  <div>
+                    <h3 className="font-sans font-bold text-slate-950 text-base mb-1">
+                      {plan.name}
+                    </h3>
+                    <span className="text-[10px] text-slate-400 block font-semibold mb-4">
+                      {plan.billing}
+                    </span>
+
+                    {/* Price Tag styling */}
+                    <div className="flex items-baseline gap-1 mb-4">
+                      <span className="text-slate-950 text-2xl font-bold">¥</span>
+                      <span className="text-slate-950 text-4xl font-sans font-black tracking-tight">{plan.price}</span>
+                      <span className="text-slate-400 text-xs text-semibold">/ 元</span>
+                    </div>
+
+                    <div className="border-t border-slate-100 my-4 pt-3 space-y-3">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">
+                          算力配额
+                        </span>
+                        <p className="text-slate-800 text-xs font-semibold mt-0.5 leading-relaxed">
+                          {plan.quota}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider">
+                          适用对象
+                        </span>
+                        <p className="text-slate-600 text-xs leading-normal mt-0.5">
+                          {plan.suitedFor}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="h-[1px] bg-slate-100 my-4"></div>
+
+                    {/* Bullet list of advantages */}
+                    <ul className="space-y-2 mb-6">
+                      {plan.features.map((feature, idx) => (
+                        <li key={idx} className="flex gap-2 items-start text-[11px] text-slate-500 leading-normal">
+                          <Check className="w-3.5 h-3.5 text-indigo-600 shrink-0 mt-0.5" />
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div>
+                    {/* CTA purchase link */}
+                    <a
+                      href="https://ai.ronin77.xyz/console"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`w-full block text-center py-3 rounded-xl text-xs font-bold transition shadow-sm ${
+                        plan.isPopular 
+                          ? "bg-indigo-600 hover:bg-slate-950 text-white" 
+                          : "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                      }`}
+                    >
+                      立即去控制台订购
+                    </a>
+                  </div>
+
+                </div>
+              ))}
+            </div>
+
+            {/* QA Section in support */}
+            <div className="max-w-3xl mx-auto rounded-3xl bg-slate-50 p-8 border border-slate-200 text-xs">
+              <h3 className="font-sans font-bold text-base text-slate-950 text-center mb-6">
+                💡 充值计费常见问答 (F.A.Qs)
+              </h3>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 leading-relaxed text-slate-600">
+                <div>
+                  <span className="font-extrabold text-slate-900 block mb-1">充值额度是否会过期？</span>
+                  <span>答：绝对不会。购买的额度积分终身有效，不含任何月度最低消费扣减规定，用完为止。</span>
+                </div>
+                <div>
+                  <span className="font-extrabold text-slate-900 block mb-1">如何进行额度充值和查询？</span>
+                  <span>答：在右上角直达「API 控制台」注册登录后，转至「充值」菜单。系统支持支付宝或微信免手续费实时发卡、自助核销。</span>
+                </div>
+                <div>
+                  <span className="font-extrabold text-slate-900 block mb-1">可以与别人共用一个 Key 么？</span>
+                  <span>答：可以。您在后台生成的 sk-xxxxxx 令牌允许随时修改 QPS 限频并发数目，便于在独立团队开发中分配隔离。</span>
+                </div>
+                <div>
+                  <span className="font-extrabold text-slate-900 block mb-1">是否提供更高级的月结账单？</span>
+                  <span>答：有的，针对大额企业与高校课题采购，我们提供企业专对公及 SLAs 定制并开具正规发票，详情可发工单随时取得联系。</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+
+        {/* ========================================================
+            七、文档页面 ROUTE: DOCS
+            ======================================================== */}
+        {currentRoute === "docs" && (
+          <div className="flex-1 flex flex-col md:flex-row h-[calc(100vh-4.25rem)] overflow-hidden" id="docs-route-container">
+            
+            {/* Catalog catalog Sidebar menu */}
+            <aside className="w-full md:w-64 bg-slate-50 border-r border-slate-200 overflow-y-auto shrink-0 p-4">
+              <div className="mb-4">
+                <span className="p-1.5 rounded bg-indigo-50 text-indigo-700 inline-block mb-2">
+                  <BookOpen className="w-4 h-4 text-indigo-600" />
+                </span>
+                <h3 className="text-xs font-extrabold text-slate-900">RONIN 指导手册</h3>
+                <span className="text-[10px] text-slate-400">持续更新系统参数与最佳实践</span>
+              </div>
+
+              {DOC_CATALOG.map((group) => (
+                <div key={group.id} className="mt-4 first:mt-0">
+                  <span className="px-2.5 py-1 block text-[10px] font-extrabold text-slate-400 uppercase tracking-widest hover:text-slate-500 transition">
+                    {group.title}
+                  </span>
+                  <div className="mt-1 space-y-0.5">
+                    {group.items.map((item) => (
+                      <button
+                        key={item.id}
+                        onClick={() => setActiveCatalogItem(item.contentCode)}
+                        className={`w-full text-left px-2.5 py-2 text-xs rounded-lg transition font-medium ${
+                          activeCatalogItem === item.contentCode
+                            ? "bg-white border-2 border-slate-200 text-indigo-700 font-bold"
+                            : "text-slate-600 hover:bg-slate-200/50"
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </aside>
+
+            {/* Document display board details */}
+            <section className="flex-1 bg-white overflow-y-auto p-6 md:p-10">
+              <div className="max-w-3xl mx-auto">
+                
+                {/* Visual custom simple Markdown rendering engine */}
+                <div className="prose prose-indigo max-w-none text-xs leading-relaxed text-slate-700">
+                  {DOC_CONTENTS[activeCatalogItem]?.split("\n").map((line, idx) => {
+                    
+                    if (line.startsWith("### ")) {
+                      return <h2 key={idx} className="text-lg font-black text-slate-950 mt-6 mb-3 border-b-2 border-slate-100 pb-2 bg-gradient-to-r from-indigo-50/20 to-transparent p-1">{line.slice(4)}</h2>;
+                    }
+                    if (line.startsWith("#### ")) {
+                      return <h3 key={idx} className="text-sm font-bold text-slate-900 mt-4 mb-2">{line.slice(5)}</h3>;
+                    }
+                    if (line.startsWith("> ")) {
+                      return (
+                        <blockquote key={idx} className="p-3 my-4 bg-indigo-50 text-indigo-700 rounded-xl border-l-[4px] border-indigo-500 font-medium">
+                          ⚠️ {line.slice(2)}
+                        </blockquote>
+                      );
+                    }
+                    if (line.startsWith("* ")) {
+                      return (
+                        <li key={idx} className="list-disc ml-5 my-1.5 font-semibold text-slate-800">
+                          {line.slice(2)}
+                        </li>
+                      );
+                    }
+                    if (line.startsWith("```")) {
+                      if (line.trim() === "```" || line.trim() === "```bash" || line.trim() === "```javascript" || line.trim() === "```python" || line.trim() === "```http") {
+                        return null; // Handle borders below
+                      }
+                    }
+
+                    // Treat markdown code fences simply as nice code render segments
+                    const isCodeSegment = line.trim().startsWith("https://") || line.trim().startsWith("API域名") || line.trim().startsWith("const ") || line.trim().startsWith("import ") || line.trim().startsWith("url =") || line.trim().startsWith("curl -X");
+                    if (isCodeSegment) {
+                      return (
+                        <pre key={idx} className="bg-slate-900 text-indigo-300 p-4 rounded-xl font-mono text-[11px] overflow-x-auto my-3 leading-normal border border-slate-950 shadow-sm relative group">
+                          <code>{line}</code>
+                        </pre>
+                      );
+                    }
+
+                    return <p key={idx} className={line.trim() === "" ? "h-2" : "my-1"}>{line}</p>;
+                  })}
+                </div>
+
+                {/* Docs Footer */}
+                <div className="border-t border-slate-100 mt-12 pt-6 flex items-center justify-between text-xs text-slate-400">
+                  <span>最后更新：2026-05-28 14:37</span>
+                  <a 
+                    href="https://ai.ronin77.xyz/console" 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-indigo-600 hover:underline font-bold flex items-center gap-1"
+                  >
+                    <span>去控制台生成你的 Token</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+
+              </div>
+            </section>
+
+          </div>
+        )}
+
+
+        {/* ========================================================
+            八、关于页面 ROUTE: ABOUT
+            ======================================================== */}
+        {currentRoute === "about" && (
+          <div className="flex-1 py-12 px-4 max-w-4xl mx-auto w-full" id="about-route-container">
+            
+            <div className="bg-white rounded-3xl p-8 border border-slate-200/80 shadow-sm">
+              <div className="flex flex-col items-center text-center max-w-xl mx-auto mb-10">
+                <div className="p-3.5 rounded-2xl bg-indigo-50 text-indigo-700 mb-4">
+                  <Terminal className="w-8 h-8" />
+                </div>
+                <h1 className="font-sans font-extrabold text-2xl text-slate-950 tracking-tight">
+                  关于 RONIN AI LAB 创新实验室
+                </h1>
+                <p className="mt-2 text-xs text-slate-500 leading-normal">
+                  致力于打通 AI 应用极客的创意工作流，建立干净、尊贵的数字生产效率乐园。
+                </p>
+              </div>
+
+              <div className="prose prose-slate leading-relaxed text-slate-600 text-xs space-y-6">
+                <div>
+                  <h3 className="font-sans font-extrabold text-sm text-slate-900 mb-2">
+                    🎯 我们的初心与愿景
+                  </h3>
+                  <p>
+                    随着各大 AI 模型竞争日益激烈，API 接入体系也愈加复杂。对于大多数中国独立开发者、跨境创作者和全栈工程“牛马”而言，原厂昂贵而又充值重重的 API Key 设立了不可忽视的门槛。
+                  </p>
+                  <p className="mt-2">
+                    为此，**RONIN AI LAB** 团队正式成立，底层深度连接高效平价的 **New API** 服务。我们坚持提供不做多余修饰的原生接口代理，让算力能够以简单、透明、优雅的形式直达每一位追求速度的极客手边。
+                  </p>
+                </div>
+
+                <div>
+                  <h3 className="font-sans font-extrabold text-sm text-slate-900 mb-2">
+                    🛠️ 精湛至臻的架构优势
+                  </h3>
+                  <p>
+                    我们使用符合极致工程美学的淺灰蓝毛玻璃外观作为前端，采用现代 Node.js 服务端 API 代理机制，保证任何客户绝不会在浏览器端暴露出自己昂贵的 sk- 密钥，真正做到商用级别的安全。
+                  </p>
+                  <p className="mt-2">
+                    不仅于此，我们创新的 **“无限创意画布” (Infinite Workspace)** 白板，首次允许创作者在非线性白板中随时拖拽或进行 AI 协同拼贴，极大丰富了素材和灵感重组的维度。
+                  </p>
+                </div>
+
+                <div className="border-t border-slate-100 pt-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-center">
+                    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                      <span className="text-xl font-bold text-slate-900 block font-sans">100% 精准响应</span>
+                      <span className="text-[10px] text-slate-400 mt-1 block">对齐原生接口协议标准</span>
+                    </div>
+                    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100">
+                      <span className="text-xl font-bold text-indigo-600 block font-sans">只做清爽干净</span>
+                      <span className="text-[10px] text-slate-400 mt-1 block">杜绝牛皮癣弹窗、不实宣传</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-900 rounded-2xl p-6 text-white text-center mt-8">
+                  <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-widest mb-1.5">
+                    已准备好提升创意速率了吗？
+                  </h4>
+                  <p className="text-[11px] text-slate-300 max-w-sm mx-auto mb-4 leading-normal">
+                    现在就去注册分配您的商业 API，或者在对话沙盒中发送您的第一个科研或海报构想。
+                  </p>
+                  <button
+                    onClick={() => setRoute("home")}
+                    className="px-5 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-950 text-xs font-bold transition shadow-md"
+                  >
+                    返回实验室首页
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+      </main>
+
+      {/* Access Token Input Security Modal Dialog */}
+      <AccessCodeModal 
+        isOpen={isAccessModalOpen}
+        onClose={() => setIsAccessModalOpen(false)}
+        accessCode={accessCode}
+        onSave={(code) => setAccessCode(code)}
+      />
+
+      {/* Global minimal clean footer block */}
+      <footer className="border-t border-slate-200 bg-white/50 py-6 text-center text-[11px] text-slate-400 mt-16">
+        <p>© 2026 RONIN AI LAB 研发创新团队. All rights reserved.</p>
+        <p className="mt-1">
+          本平台全面兼容 OpenAI API 调用规范 | 服务端代理：
+          <span className="font-mono text-indigo-500 font-semibold bg-indigo-50/50 px-1 py-0.5 rounded">
+            https://ai.ronin77.xyz/v1
+          </span>
+        </p>
+      </footer>
+
+    </div>
+  );
+}

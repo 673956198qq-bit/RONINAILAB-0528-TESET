@@ -1,0 +1,6 @@
+{
+  "name": "RONIN AI LAB",
+  "description": "极简、高级的 AI 生产力工作台，集成多模型对话、AI 绘图、无限画布工作流与 API 聚合服务",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
