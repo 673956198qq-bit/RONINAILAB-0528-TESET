@@ -38,9 +38,11 @@ export interface PricingPlan {
   features: string[];
 }
 
+export type CanvasItemType = "sticky" | "text" | "prompt" | "image" | "attachment" | "result";
+
 export interface CanvasCard {
   id: string;
-  type: "note" | "prompt" | "image" | "result";
+  type: CanvasItemType;
   title: string;
   content: string;
   x: number;
@@ -51,6 +53,8 @@ export interface CanvasCard {
   isEditing?: boolean;
   fileName?: string;
   fileSize?: string;
+  fileType?: string;
+  zIndex?: number;
 }
 
 export interface DocCatalog {

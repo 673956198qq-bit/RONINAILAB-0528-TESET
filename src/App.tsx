@@ -38,7 +38,7 @@ import {
 import Navbar from "./components/Navbar";
 import AccessCodeModal from "./components/AccessCodeModal";
 import { APP_MODELS, PRICING_PLANS, DOC_CATALOG, DOC_CONTENTS, QUICK_PROMPTS } from "./data";
-import { ChatMessage, ChatSession, CanvasCard } from "./types";
+import { ChatMessage, ChatSession, CanvasCard, CanvasItemType } from "./types";
 
 export default function App() {
   // Navigation & Access Config
@@ -90,6 +90,7 @@ export default function App() {
   const [drawModel, setDrawModel] = useState("gpt-image-1");
   const [drawSize, setDrawSize] = useState("1024x1024");
   const [isDrawing, setIsDrawing] = useState(false);
+  const [drawError, setDrawError] = useState<string | null>(null);
   const [generatedImages, setGeneratedImages] = useState<{ url: string; prompt: string; timestamp: string; isFallback?: boolean }[]>([]);
 
   // --- Infinite Canvas Workspace States ---
@@ -370,7 +371,8 @@ export default function App() {
     if (!drawPrompt.trim() || isDrawing) return;
 
     setIsDrawing(true);
-    showToast("RONIN 绘图管线已连接，正在全力渲染中...", "info");
+    setDrawError(null);
+    showToast("绘图调用中，请耐心等候十几秒渲染大图...", "info");
 
     try {
       const response = await fetch("/api/image", {
@@ -389,10 +391,14 @@ export default function App() {
       if (!response.ok) {
         if (response.status === 401) {
           setIsAccessModalOpen(true);
-          throw new Error("请先完成 APP_ACCESS_CODE 访问保护验证。");
+          const customCodeErr = "解密失败: 客户端授权密码 (APP_ACCESS_CODE) 不匹配。此平台已受到安全阻断装置保护。请在顶部导航栏锁形盾牌键入有效密码。";
+          setDrawError(customCodeErr);
+          throw new Error(customCodeErr);
         }
         const errData = await response.json().catch(() => ({}));
-        throw new Error(errData.message || `绘图服务端出错 (HTTP ${response.status})`);
+        const parsedErrMsg = errData.message || `API 端返回了未知服务器异常 (HTTP ${response.status})`;
+        setDrawError(parsedErrMsg);
+        throw new Error(parsedErrMsg);
       }
 
       const data = await response.json();
@@ -403,7 +409,9 @@ export default function App() {
       } else if (data.data?.[0]?.url) {
         finalImgUrl = data.data[0].url;
       } else {
-        throw new Error("接口返回的图片数据为空，请重试。");
+        const noDataErr = "接口校验未命中: 远端生成的图片像素内容为空。请检查代理站 API 状态或余额是否还充盈。";
+        setDrawError(noDataErr);
+        throw new Error(noDataErr);
       }
 
       setGeneratedImages(prev => [
@@ -417,6 +425,13 @@ export default function App() {
       
       showToast("构图完毕！唯美大图已呈现及陈列。", "success");
     } catch (err: any) {
+      if (!drawError) {
+        let textErr = err.message || "请求发生了意料之外的超时或网络抖动。";
+        if (textErr.includes("Failed to fetch")) {
+          textErr = "极客代理服务器异常: 本地网络无法和代理管道建立长连接。请确保 Express 后端正在监听端口3001且正常可用。";
+        }
+        setDrawError(textErr);
+      }
       showToast(err.message || "图像渲染发生了意料外的中断。", "error");
     } finally {
       setIsDrawing(false);
@@ -424,7 +439,12 @@ export default function App() {
   };
 
   // --- Infinite Canvas Actions & Mathematical Physics ---
-  const addCardToCanvas = (type: "note" | "prompt" | "image" | "result", customUrl?: string) => {
+  const addCardToCanvas = (
+    type: CanvasItemType, 
+    customUrl?: string, 
+    customTitle?: string, 
+    customContent?: string
+  ) => {
     const id = `card-${Date.now()}`;
     
     // Calculate viewport center so the new card lands nicely in front of the creator
@@ -434,33 +454,36 @@ export default function App() {
     const centerX = (viewportWidth / 2 - canvasTranslate.x) / canvasScale - 130;
     const centerY = (viewportHeight / 2 - canvasTranslate.y) / canvasScale - 80;
 
+    const defaultTitle = 
+      type === "sticky" ? "便签" :
+      type === "text" ? "多功能文本" :
+      type === "prompt" ? "微调提示词" :
+      type === "result" ? "AI 文本回答" :
+      type === "attachment" ? "项目附件" : "画幅原图";
+
+    const defaultContent = 
+      type === "sticky" ? "点击此处编辑灵感便签..." :
+      type === "text" ? "这是一份包含多段文本的卡片模型。您可以双击进入深度文字排版，支持容纳长方案或测试数据。" :
+      type === "prompt" ? "一幅极其精美的前沿生态科技写生，温暖日光，高细节多层级渲染，现代产品质感" :
+      type === "result" ? "大模型已成功将文本写完并安全存储于本地。请在此查看并直接复制。" :
+      type === "attachment" ? "文件名: doc.pdf\n文件大小: 128KB\n状态: 已安全装载" : "导入创意画幅原件";
+
     const newCard: CanvasCard = {
       id,
       type,
-      title: type === "note" 
-        ? "📝 极速便签" 
-        : type === "prompt" 
-          ? "✍️ 灵感提示词" 
-          : type === "result"
-            ? "✨ AI文案"
-            : "🖼️ 创意画幅",
-      content: type === "note" 
-        ? "点击这里开始撰写灵感..." 
-        : type === "prompt" 
-          ? "A cinematic photo of a cyberpunk ronin character standing in digital rain..." 
-          : type === "result"
-            ? "「万象融汇，瞬息创构」\n您的 AI 画布内容生成于此。"
-            : "灵感参考特征",
+      title: customTitle || defaultTitle,
+      content: customContent || defaultContent,
       x: Math.max(20, Math.round(centerX)),
       y: Math.max(20, Math.round(centerY)),
-      width: type === "image" ? 300 : 260,
-      height: type === "image" ? 250 : 140,
-      imageUrl: customUrl
+      width: type === "image" ? 320 : type === "attachment" ? 280 : 260,
+      height: type === "image" ? 280 : type === "attachment" ? 160 : 150,
+      imageUrl: customUrl,
+      zIndex: Math.max(...canvasCards.map(c => c.zIndex || 0), 0) + 1
     };
 
     setCanvasCards(prev => [...prev, newCard]);
     setSelectedCanvasCard(id); // focus on newly loaded card
-    showToast(`已添加新卡片「${newCard.title}」至工作台`, "success");
+    showToast(`已成功装载「${newCard.title}」至工作台。`, "success");
   };
 
   const deleteCanvasCard = (cid: string) => {
@@ -582,6 +605,14 @@ export default function App() {
     });
   };
 
+  // Sync refs to prevent wheel event dependency tearing or lag
+  const scaleRef = useRef(canvasScale);
+  const translateRef = useRef(canvasTranslate);
+  useEffect(() => {
+    scaleRef.current = canvasScale;
+    translateRef.current = canvasTranslate;
+  }, [canvasScale, canvasTranslate]);
+
   // Drag-Scroll Zoom Event attaching hook
   useEffect(() => {
     const el = canvasRef.current;
@@ -589,12 +620,33 @@ export default function App() {
 
     const handleWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const zoomIntensity = 0.05;
-      const scaleDelta = e.deltaY < 0 ? zoomIntensity : -zoomIntensity;
       
-      setCanvasScale(prev => {
-        const nextScale = Math.min(2, Math.max(0.4, prev + scaleDelta));
-        return parseFloat(nextScale.toFixed(2));
+      const rect = el.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // Subtle zoom multiplier
+      const zoomFactor = 1.05;
+      const scaleDelta = e.deltaY < 0 ? zoomFactor : 1 / zoomFactor;
+
+      const prevScale = scaleRef.current;
+      const prevTranslate = translateRef.current;
+
+      let nextScale = prevScale * scaleDelta;
+      // Clamp scale between 0.3 and 2.5 times
+      nextScale = Math.min(2.5, Math.max(0.3, nextScale));
+
+      // Coordinate projections: Keep the point under the cursor stationary while zooming
+      const canvasX = (mouseX - prevTranslate.x) / prevScale;
+      const canvasY = (mouseY - prevTranslate.y) / prevScale;
+
+      const nextTranslateX = mouseX - canvasX * nextScale;
+      const nextTranslateY = mouseY - canvasY * nextScale;
+
+      setCanvasScale(parseFloat(nextScale.toFixed(3)));
+      setCanvasTranslate({
+        x: Math.round(nextTranslateX),
+        y: Math.round(nextTranslateY)
       });
     };
 
@@ -602,7 +654,7 @@ export default function App() {
     return () => {
       el.removeEventListener("wheel", handleWheel);
     };
-  }, [canvasRef.current, currentRoute, canvasTranslate]);
+  }, [canvasRef.current, currentRoute]);
 
   // Canvas File Upload handle (Reference attachment)
   const handleCanvasFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -849,19 +901,19 @@ export default function App() {
     const id = `card-${Date.now()}`;
     const newCard: CanvasCard = {
       id,
-      type: "note",
-      title: `📎 开发附件: ${file.name}`,
-      content: `文件名称: ${file.name}\n大小规格: ${sizeStr}\n文件类型: ${file.type || "二进制"}\n离线状态: 本地草稿资产`,
+      type: "attachment",
+      title: `${file.name}`,
+      content: `文件名称: ${file.name}\n大小规格: ${sizeStr}\n文件类型: ${file.type || "二进制文件"}\n准备就绪: 本地存储`,
       x: canvasX,
       y: canvasY,
       width: 280,
-      height: 154,
+      height: 160,
       fileName: file.name,
       fileSize: sizeStr
     };
     setCanvasCards(prev => [...prev, newCard]);
     setSelectedCanvasCard(id);
-    showToast("本地附件信息注册成功！", "success");
+    showToast("本地附件导入并附载成功！", "success");
     setDoubleClickMenu(null);
     e.target.value = "";
   };
@@ -1227,7 +1279,7 @@ export default function App() {
                   🌐 联网检索模式
                 </button>
                 <button 
-                  onClick={() => { setRoute("image"); setDrawPrompt("生成一张黑金风格高科技折片海报"); }}
+                  onClick={() => { setRoute("image"); setDrawPrompt("一幅极简英伦格调的精装咖啡杯，置于晨光折射的水泥台面，高细节写实，产品摄影"); }}
                   className="px-2.5 py-1 bg-slate-50 hover:bg-emerald-50 hover:text-emerald-600 border border-slate-200/50 rounded-lg"
                 >
                   🎨 唤醒生图工作流
@@ -1533,33 +1585,33 @@ export default function App() {
                   {/* Prompt Textarea */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      原厂中文词/提示词汇 (Prompt)
+                      提示词 (Prompt)
                     </label>
                     <textarea
                       rows={4}
                       value={drawPrompt}
                       onChange={(e) => setDrawPrompt(e.target.value)}
-                      placeholder="例如：黑金风格的奢华咖啡杯处于反光的太空金属地表上，冷色调主光，写实，3D材质感强烈..."
+                      placeholder="请输入你想生成的画面描述，例如：一幅置于木质桌面上的精致陶瓷茶杯特写，背景被柔和的散焦日光虚化，极简，高保真..."
                       className="w-full p-3 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-emerald-500 text-slate-800"
                       required
                     />
                     <span className="block text-[10px] text-slate-400 mt-1">
-                      * 支持直接键入中文，模型将进行语义降噪与智能拓写。
+                      * 支持直接键入中文，模型将进行语义识别与高保真图像合成。
                     </span>
                   </div>
 
                   {/* Model Choice */}
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1.5">
-                      选择AI意境图大模型
+                      选择 AI 绘图模型
                     </label>
                     <select
                       value={drawModel}
                       onChange={(e) => setDrawModel(e.target.value)}
-                      className="w-full p-2.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none"
+                      className="w-full p-2.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-0"
                     >
-                      <option value="gpt-image-1">gpt-image-1 (精细排版/黑金高光设计)</option>
-                      <option value="stable-diffusion-3">Stable Diffusion 3.5 (写实插画)</option>
+                      <option value="gpt-image-1">gpt-image-1</option>
+                      <option value="stable-diffusion-3">Stable Diffusion 3.5</option>
                     </select>
                   </div>
 
@@ -1570,8 +1622,8 @@ export default function App() {
                     </label>
                     <div className="grid grid-cols-2 gap-2">
                       {[
-                        { size: "1024x1024", label: "1:1 方形大图" },
-                        { size: "16:9", label: "高端横版海报" }, 
+                        { size: "1024x1024", label: "1024x1024 (1:1)" },
+                        { size: "16:9", label: "16:9 横屏海报" }, 
                       ].map((item) => (
                         <button
                           key={item.size}
@@ -1594,10 +1646,10 @@ export default function App() {
                     type="submit"
                     disabled={isDrawing}
                     id="trigger-render-btn"
-                    className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-xs font-bold text-white bg-slate-950 hover:bg-indigo-950 transition shadow-md disabled:bg-slate-400 duration-200"
+                    className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-xs font-bold text-white bg-slate-950 hover:bg-indigo-950 transition shadow-md disabled:bg-slate-400 duration-200 cursor-pointer"
                   >
                     <Sparkles className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <span>{isDrawing ? "画面构件搭建中..." : "启动高精图片渲染"}</span>
+                    <span>{isDrawing ? "生成中..." : "开始生成"}</span>
                   </button>
                 </form>
               </div>
@@ -1605,7 +1657,7 @@ export default function App() {
               {/* Bottom notice pricing warning */}
               <div className="mt-8 p-3 rounded-xl bg-slate-100 border border-slate-200 text-[10px] text-slate-400">
                 <span className="block font-bold mb-1">⚖️ 商业记账提示</span>
-                单张 1024 像素渲染直接连接 New API \`/v1/images/generations\` 特惠渠道扣除 0.12 元/张。无需购买官方昂贵 API，更贴合出海牛马商业需求。
+                单张 1024 像素渲染直接连接 New API \`/v1/images/generations\` 渠道扣除，无需购买额外复杂的支付渠道，完美贴合创作者与商业化运营团队需求。
               </div>
 
             </aside>
@@ -1644,19 +1696,27 @@ export default function App() {
                 </div>
               )}
 
+              {/* Exact Error Prompt display */}
+              {drawError && (
+                <div className="p-6 bg-rose-50 border border-rose-250 rounded-2xl max-w-lg mx-auto text-center my-6 space-y-2 shrink-0 shadow-sm">
+                  <div className="inline-flex p-2 bg-rose-100 text-rose-700 rounded-full">
+                    <Info className="w-5 h-5" />
+                  </div>
+                  <h4 className="text-xs font-black text-rose-950">绘图接口请求失败</h4>
+                  <p className="text-xs text-rose-800 leading-relaxed max-w-sm mx-auto font-medium">
+                    {drawError}
+                  </p>
+                  <p className="text-[10px] text-rose-500 font-medium">
+                    💡 提示: 如果是首次配置，请点击顶部中间盾牌「安全性验证」并填入正确的 APP_ACCESS_CODE。
+                  </p>
+                </div>
+              )}
+
               {/* Empty state when there is no data and no active generation */}
               {generatedImages.length === 0 && !isDrawing && (
-                <div className="flex-1 flex flex-col items-center justify-center p-12 bg-white/70 backdrop-blur-xs rounded-3xl border border-slate-200/50 shadow-[0_8px_30px_rgba(0,0,0,0.01)] text-center max-w-xl mx-auto my-auto w-full">
-                  <div className="h-12 w-12 flex items-center justify-center rounded-full bg-emerald-50 border border-emerald-150 text-emerald-600 mb-4 animate-bounce">
-                    <Sparkles className="w-5 h-5" />
-                  </div>
-                  <h3 className="text-xs font-black text-slate-900 tracking-tight">输入灵感提示词，启动商用级图像生成</h3>
-                  <div className="h-[1px] bg-slate-200/60 w-24 my-3 mx-auto"></div>
-                  <p className="text-[11px] text-slate-400 leading-relaxed max-w-sm">
-                    通过 RONIN AI LAB 绘图控制台直接对接行业旗舰级精绘端点。无需购买高昂官方账号，即可非线性生产高画幅产品原稿、插画底片、排版配图。
-                  </p>
-                  <p className="text-[10px] text-slate-350 mt-4 font-mono">
-                    💡 请在左侧参数栏输入描述，并点击「启动高精图片渲染」按钮
+                <div className="flex-1 flex flex-col items-center justify-center p-12 text-center max-w-xl mx-auto my-auto w-full">
+                  <p className="text-xs text-slate-400 font-medium">
+                    输入提示词后，生成结果将在这里显示。
                   </p>
                 </div>
               )}
@@ -1797,7 +1857,7 @@ export default function App() {
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => addCardToCanvas("note")}
+                  onClick={() => addCardToCanvas("sticky")}
                   className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold transition"
                 >
                   <StickyNote className="w-3.5 h-3.5 text-amber-600" />
@@ -1805,10 +1865,18 @@ export default function App() {
                 </button>
                 <button
                   type="button"
+                  onClick={() => addCardToCanvas("text")}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-teal-50 hover:bg-teal-100 border border-teal-200 text-teal-800 font-bold transition"
+                >
+                  <FileText className="w-3.5 h-3.5 text-teal-600" />
+                  <span>添加文本卡</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => addCardToCanvas("prompt")}
                   className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 font-bold transition"
                 >
-                  <FileText className="w-3.5 h-3.5 text-indigo-600" />
+                  <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
                   <span>添加提示词卡</span>
                 </button>
                 <button
@@ -1816,7 +1884,7 @@ export default function App() {
                   onClick={() => addCardToCanvas("result")}
                   className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-violet-50 hover:bg-violet-100 border border-violet-200 text-violet-800 font-bold transition"
                 >
-                  <Sparkles className="w-3.5 h-3.5 text-violet-600" />
+                  <Cpu className="w-3.5 h-3.5 text-violet-600" />
                   <span>添加空白结果卡</span>
                 </button>
 
@@ -2065,42 +2133,49 @@ export default function App() {
                       <h4 className="text-xs font-black text-slate-900 tracking-tight">空白无限画布</h4>
                       <div className="h-[1px] bg-slate-200/50 my-2 w-full"></div>
                       <p className="text-[10px] text-slate-500 leading-relaxed">
-                        👉 <span className="font-bold text-slate-700">双击画布</span> 唤起操作菜单添加内容 <br />
-                        ✋ <span className="font-bold text-slate-700">鼠标拖拽</span> 移动视野进行平移平布 <br />
-                        ⚙️ <span className="font-bold text-slate-700">鼠标滚轮</span> 无极缩放 (支持右下角重置)
+                        👉 <span className="font-bold text-slate-700">双击画布</span> 可随时在任意坐标创建灵感。
                       </p>
                     </div>
                   )}
 
                   {canvasCards.map((card) => {
                     const isSelected = selectedCanvasCard === card.id;
-                    
-                    // Style attributes according to generic types
+
                     let accentBorderColor = "border-slate-200 hover:border-slate-450";
                     let accentThemeBg = "bg-slate-50";
                     let accentTextRole = "text-slate-800";
-                    let badgeLabel = "灵感底蕴";
+                    let badgeLabel = "底蕴卡片";
 
-                    if (card.type === "note") {
+                    if (card.type === "note" || card.type === "sticky") {
                       accentBorderColor = isSelected ? "border-amber-500 ring-2 ring-amber-100" : "border-amber-250 hover:border-amber-400";
                       accentThemeBg = "bg-amber-50/90";
                       accentTextRole = "text-amber-900";
-                      badgeLabel = "灵感便签";
+                      badgeLabel = "便签";
+                    } else if (card.type === "text") {
+                      accentBorderColor = isSelected ? "border-teal-500 ring-2 ring-teal-100" : "border-slate-250 hover:border-teal-400";
+                      accentThemeBg = "bg-teal-50/40";
+                      accentTextRole = "text-teal-950";
+                      badgeLabel = "多功能文本";
                     } else if (card.type === "prompt") {
                       accentBorderColor = isSelected ? "border-indigo-600 ring-2 ring-indigo-100" : "border-indigo-250 hover:border-indigo-400";
                       accentThemeBg = "bg-indigo-50/90";
                       accentTextRole = "text-indigo-900";
-                      badgeLabel = "提示词卡";
+                      badgeLabel = "提示词";
                     } else if (card.type === "result") {
                       accentBorderColor = isSelected ? "border-violet-600 ring-2 ring-violet-100" : "border-violet-250 hover:border-violet-400";
                       accentThemeBg = "bg-violet-50/90";
                       accentTextRole = "text-violet-900";
-                      badgeLabel = "AI结果";
+                      badgeLabel = "AI文本";
                     } else if (card.type === "image") {
                       accentBorderColor = isSelected ? "border-emerald-600 ring-2 ring-emerald-100" : "border-slate-250 hover:border-emerald-400";
                       accentThemeBg = "bg-white";
-                      accentTextRole = "text-slate-800";
-                      badgeLabel = "创意原画";
+                      accentTextRole = "text-emerald-900";
+                      badgeLabel = "画幅原图";
+                    } else if (card.type === "attachment") {
+                      accentBorderColor = isSelected ? "border-rose-500 ring-2 ring-rose-100" : "border-rose-250 hover:border-rose-400";
+                      accentThemeBg = "bg-rose-50/90";
+                      accentTextRole = "text-rose-950";
+                      badgeLabel = "附件文件";
                     }
 
                     return (
@@ -2109,22 +2184,17 @@ export default function App() {
                         onClick={(e) => {
                           e.stopPropagation();
                           setSelectedCanvasCard(card.id);
-                          // Reorder cards array to naturally draw selected on top
-                          setCanvasCards(prev => {
-                            const filtered = prev.filter(c => c.id !== card.id);
-                            return [...filtered, card];
-                          });
                         }}
-                        className={`absolute canvas-card bg-white rounded-2xl shadow-[0_4px_24px_rgba(15,23,42,0.04)] border-2 flex flex-col justify-between transition-shadow group ${accentBorderColor}`}
+                        className={`absolute flex flex-col rounded-2xl bg-white shadow-[0_4px_20px_rgba(0,0,0,0.04)] hover:shadow-md transition-all duration-150 border overflow-hidden ${accentBorderColor}`}
                         style={{
                           left: card.x,
                           top: card.y,
                           width: card.width || 260,
-                          minHeight: card.height || 140
+                          minHeight: card.height || 140,
+                          zIndex: card.zIndex || 1
                         }}
                       >
-
-                        {/* Card Drag Handle Title Block */}
+                        {/* Drag Header handle */}
                         <div
                           onMouseDown={(e) => handleCardDragStart(e, card)}
                           className={`px-3 py-2 cursor-move rounded-t-2xl border-b flex items-center justify-between text-[10px] font-black tracking-wide uppercase ${accentThemeBg} ${accentTextRole}`}
@@ -2176,7 +2246,6 @@ export default function App() {
                                   className="p-1.5 rounded-full bg-indigo-600 text-white hover:scale-105 transition shadow-sm"
                                   title="立刻下载到本地"
                                   onClick={(e) => {
-                                    // if base64 direct click download
                                     if (card.imageUrl?.startsWith("data:")) {
                                       e.stopPropagation();
                                       const link = document.createElement("a");
@@ -2194,32 +2263,68 @@ export default function App() {
                             </div>
                           )}
 
+                          {/* Distinct attachment metadata block */}
+                          {card.type === "attachment" && (
+                            <div className="flex items-center gap-3 p-2.5 rounded-xl bg-rose-50/50 border border-rose-100 mb-1 shrink-0 select-none pointer-events-none">
+                              <div className="p-2 rounded-lg bg-rose-105 text-rose-600">
+                                <Paperclip className="w-3.5 h-3.5 text-rose-600" />
+                              </div>
+                              <div className="truncate flex-1">
+                                <h5 className="text-[10px] font-black text-rose-900 truncate">{card.fileName || "项目文件附件"}</h5>
+                                <p className="text-[8px] text-rose-500 font-medium">{card.fileSize || "未知大小规格"} • 离线就绪</p>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Editable plain text area details */}
                           <textarea
                             value={card.content}
                             onChange={(e) => handleCardContentChange(card.id, e.target.value)}
-                            rows={card.type === "image" ? 2 : 4}
+                            rows={card.type === "image" ? 2 : card.type === "attachment" ? 2 : 4}
                             className="w-full text-xs text-slate-650 bg-transparent border-none outline-none focus:ring-0 resize-none leading-relaxed text-slate-700"
                             placeholder="双击编辑文字资产..."
                           />
 
                           {/* Individual Card toolbar utilities */}
-                          <div className="pt-2 border-t border-slate-100/60 flex items-center justify-between text-[10px] text-slate-400">
-                            <span className="font-mono text-[8px] opacity-60">ID: {card.id.slice(-5)}</span>
+                          <div className="pt-2 border-t border-slate-100/60 flex items-center justify-between text-[10px] text-slate-400 font-bold">
+                            <span className="font-mono text-[8px] opacity-65 select-none text-slate-350">ID: {card.id.slice(-5)}</span>
                             
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                navigator.clipboard.writeText(card.content);
-                                showToast("卡片文本内容已复制到剪切板！", "success");
-                              }}
-                              className="p-1 hover:text-slate-900 hover:bg-slate-50 rounded transition flex items-center gap-1 font-bold"
-                              title="一键拷贝文字内容"
-                            >
-                              <Copy className="w-3 h-3 text-slate-400" />
-                              <span>复制</span>
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setCanvasCards(prev => {
+                                    const filtered = prev.filter(c => c.id !== card.id);
+                                    const maxZIndex = Math.max(...prev.map(c => c.zIndex || 0), 0) + 1;
+                                    const updated = { ...card, zIndex: maxZIndex };
+                                    return [...filtered, updated];
+                                  });
+                                  setSelectedCanvasCard(card.id);
+                                  showToast("已将此卡片层级置顶。", "success");
+                                }}
+                                className="p-1 hover:text-indigo-650 hover:bg-slate-50 rounded transition flex items-center gap-1 font-bold"
+                                title="置于层级最顶端"
+                              >
+                                <Plus className="w-3 h-3 text-slate-400 rotate-45 shrink-0" />
+                                <span>置顶</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigator.clipboard.writeText(card.content);
+                                  showToast("卡片文本内容已复制到剪切板！", "success");
+                                }}
+                                className="p-1 hover:text-slate-900 hover:bg-slate-50 rounded transition flex items-center gap-1 font-bold"
+                                title="一键拷贝文字内容"
+                              >
+                                <Copy className="w-3 h-3 text-slate-400" />
+                                <span>复制</span>
+                              </button>
+                            </div>
+
                           </div>
 
                         </div>
@@ -2279,7 +2384,7 @@ export default function App() {
                         const id = `card-${Date.now()}`;
                         const newCard: CanvasCard = {
                           id,
-                          type: "note",
+                          type: "sticky",
                           title: "💡 新建灵感便签",
                           content: "双击这里在此处撰写文字灵感内容...",
                           x: doubleClickMenu.canvasX,
@@ -3088,7 +3193,7 @@ export default function App() {
                     🎯 我们的初心与愿景
                   </h3>
                   <p>
-                    随着各大 AI 模型竞争日益激烈，API 接入体系也愈加复杂。对于大多数中国独立开发者、跨境创作者和全栈工程“牛马”而言，原厂昂贵而又充值重重的 API Key 设立了不可忽视的门槛。
+                    随着各大 AI 模型竞争日益激烈，API 接入体系也愈加复杂。对于大多数中国独立开发者、跨境创作者和全栈极客开发群体而言，昂贵且申请复杂的官方 API 密钥设立了不小的门槛。
                   </p>
                   <p className="mt-2">
                     为此，**RONIN AI LAB** 团队正式成立，底层深度连接高效平价的 **New API** 服务。我们坚持提供不做多余修饰的原生接口代理，让算力能够以简单、透明、优雅的形式直达每一位追求速度的极客手边。
