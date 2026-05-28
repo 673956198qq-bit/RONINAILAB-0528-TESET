@@ -32,7 +32,8 @@ import {
   Move,
   Info,
   Shield,
-  Terminal
+  Terminal,
+  Zap
 } from "lucide-react";
 import Navbar from "./components/Navbar";
 import AccessCodeModal from "./components/AccessCodeModal";
@@ -89,13 +90,7 @@ export default function App() {
   const [drawModel, setDrawModel] = useState("gpt-image-1");
   const [drawSize, setDrawSize] = useState("1024x1024");
   const [isDrawing, setIsDrawing] = useState(false);
-  const [generatedImages, setGeneratedImages] = useState<{ url: string; prompt: string; timestamp: string; isFallback?: boolean }[]>([
-    {
-      url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1024&auto=format&fit=crop",
-      prompt: "豪华太空舱科技概念图，极简黑金高光，写实C4D渲染",
-      timestamp: "演示资产"
-    }
-  ]);
+  const [generatedImages, setGeneratedImages] = useState<{ url: string; prompt: string; timestamp: string; isFallback?: boolean }[]>([]);
 
   // --- Infinite Canvas Workspace States ---
   const [canvasCards, setCanvasCards] = useState<CanvasCard[]>(() => {
@@ -107,50 +102,24 @@ export default function App() {
         } catch (e) {}
       }
     }
-    return [
-      {
-        id: "card-inst-1",
-        type: "note",
-        title: "💡 无限创意看板指引",
-        content: "这是一个自由拖拽平移的灵感空间。您可以：\n1. 在左侧面板生成 AI 图像、文案、或拖入本地底稿上传。\n2. 双击或选择卡片即可即时在右侧面板修改和调整卡片尺寸。\n3. 拖动卡片标题行进行卡片重新排布，高亮层级会自动置顶。\n4. 支持鼠标滚轮无极缩放，随时点击右下角复位。",
-        x: 80,
-        y: 80,
-        width: 300,
-        height: 180
-      },
-      {
-        id: "card-prompt-1",
-        type: "prompt",
-        title: "✍️ 黑金极客海报提示词",
-        content: "A futuristic cyberpunk microchip core floating in pristine black water, subtle neon gold tracing, ultra-realistic visual, cinematic ambient light.",
-        x: 420,
-        y: 80,
-        width: 280,
-        height: 140
-      },
-      {
-        id: "card-result-1",
-        type: "result",
-        title: "✨ AI 润色文案",
-        content: "「极黑核心，聚烁金芒」\n颠覆秩序的微芯引擎，以原厂网关为您的创想续航。",
-        x: 420,
-        y: 250,
-        width: 280,
-        height: 140
-      },
-      {
-        id: "card-img-1",
-        type: "image",
-        title: "🎨 灵感渲染底稿",
-        content: "黑金极速概念图",
-        x: 80,
-        y: 300,
-        width: 300,
-        height: 250,
-        imageUrl: "https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?q=80&w=1024&auto=format&fit=crop"
-      }
-    ];
+    return []; // Clear initial demo cards as requested. Start on a clean slate!
   });
+
+  // --- New Commercial Context Menu & Local File Ref States ---
+  const [doubleClickMenu, setDoubleClickMenu] = useState<{ x: number; y: number; canvasX: number; canvasY: number } | null>(null);
+  const [canvasPopupDraw, setCanvasPopupDraw] = useState<{ canvasX: number; canvasY: number } | null>(null);
+  const [popupDrawPrompt, setPopupDrawPrompt] = useState("");
+  const [popupDrawModel, setPopupDrawModel] = useState("gpt-image-1");
+  const [popupDrawSize, setPopupDrawSize] = useState("1024x1024");
+  const [isPopupDrawing, setIsPopupDrawing] = useState(false);
+
+  const [canvasPopupChat, setCanvasPopupChat] = useState<{ canvasX: number; canvasY: number } | null>(null);
+  const [popupChatPrompt, setPopupChatPrompt] = useState("");
+  const [popupChatModel, setPopupChatModel] = useState("gpt-4o-mini");
+  const [isPopupWriting, setIsPopupWriting] = useState(false);
+
+  const canvasImageFileInputRef = useRef<HTMLInputElement>(null);
+  const canvasAttachmentFileInputRef = useRef<HTMLInputElement>(null);
   const [canvasScale, setCanvasScale] = useState(1);
   const [canvasTranslate, setCanvasTranslate] = useState({ x: 0, y: 0 });
   const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
@@ -547,6 +516,7 @@ export default function App() {
   };
 
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    setDoubleClickMenu(null);
     if (activeCardDrag) return;
     // Do not drag canvas if we are interacting with interactive card nodes
     if (e.target instanceof HTMLElement && e.target.closest(".canvas-card")) return;
@@ -586,6 +556,30 @@ export default function App() {
   const handleCanvasMouseUp = () => {
     setIsDraggingCanvas(false);
     setActiveCardDrag(null);
+  };
+
+  const handleCanvasDoubleClick = (e: React.MouseEvent) => {
+    // Prevent menu trigger if double clicking a card
+    if (e.target instanceof HTMLElement && e.target.closest(".canvas-card")) return;
+    e.preventDefault();
+
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    // Relative mouse coordinate in host bounding client rect viewport
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Reverse scale and coordinate translation calculations
+    const canvasX = Math.round((mouseX - canvasTranslate.x) / canvasScale);
+    const canvasY = Math.round((mouseY - canvasTranslate.y) / canvasScale);
+
+    setDoubleClickMenu({
+      x: e.clientX,
+      y: e.clientY,
+      canvasX,
+      canvasY
+    });
   };
 
   // Drag-Scroll Zoom Event attaching hook
@@ -811,6 +805,175 @@ export default function App() {
     e.target.value = ""; // Clear file selector input buffer
   };
 
+  // Modern Coordinate projection upload builders
+  const handleLocalImageCoordUpload = (e: React.ChangeEvent<HTMLInputElement>, canvasX: number, canvasY: number) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      showToast("支持上载的格式仅限本地图像文件 (如 .png, .jpg, .webp)", "error");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const b64 = event.target?.result as string;
+      const id = `card-${Date.now()}`;
+      const newCard: CanvasCard = {
+        id,
+        type: "image",
+        title: `🖼️ 导入底稿: ${file.name}`,
+        content: `本地草图 | 大小: ${(file.size / 1024).toFixed(1)} KB`,
+        x: canvasX,
+        y: canvasY,
+        width: 320,
+        height: 280,
+        imageUrl: b64,
+        fileName: file.name,
+        fileSize: `${(file.size / 1024).toFixed(1)} KB`
+      };
+      setCanvasCards(prev => [...prev, newCard]);
+      setSelectedCanvasCard(id);
+      showToast("本地参考原画图导入成功！", "success");
+      setDoubleClickMenu(null);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  const handleLocalAttachmentCoordUpload = (e: React.ChangeEvent<HTMLInputElement>, canvasX: number, canvasY: number) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const sizeStr = file.size > 1024 * 1024 
+      ? `${(file.size / (1024 * 1024)).toFixed(1)} MB` 
+      : `${(file.size / 1024).toFixed(1)} KB`;
+
+    const id = `card-${Date.now()}`;
+    const newCard: CanvasCard = {
+      id,
+      type: "note",
+      title: `📎 开发附件: ${file.name}`,
+      content: `文件名称: ${file.name}\n大小规格: ${sizeStr}\n文件类型: ${file.type || "二进制"}\n离线状态: 本地草稿资产`,
+      x: canvasX,
+      y: canvasY,
+      width: 280,
+      height: 154,
+      fileName: file.name,
+      fileSize: sizeStr
+    };
+    setCanvasCards(prev => [...prev, newCard]);
+    setSelectedCanvasCard(id);
+    showToast("本地附件信息注册成功！", "success");
+    setDoubleClickMenu(null);
+    e.target.value = "";
+  };
+
+  const handlePopupCanvasDraw = async (canvasX: number, canvasY: number) => {
+    if (!popupDrawPrompt.trim()) {
+      showToast("请输入创意提示词", "error");
+      return;
+    }
+    setIsPopupDrawing(true);
+    try {
+      const response = await fetch("/api/image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-access-code": accessCode
+        },
+        body: JSON.stringify({
+          prompt: popupDrawPrompt,
+          model: popupDrawModel,
+          size: popupDrawSize
+        })
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `请求失败，状态码: ${response.status}`);
+      }
+      const data = await response.json();
+      let finalImgUrl = "";
+      if (data.data?.[0]?.b64_json) {
+        finalImgUrl = `data:image/png;base64,${data.data[0].b64_json}`;
+      } else if (data.data?.[0]?.url) {
+        finalImgUrl = data.data[0].url;
+      } else {
+        throw new Error("接口返回的图片数据为空，请重试。");
+      }
+
+      const id = `card-${Date.now()}`;
+      const newCard: CanvasCard = {
+        id,
+        type: "image",
+        title: `🎨 AI 创意画卷`,
+        content: `模型: ${popupDrawModel} | 提示词: ${popupDrawPrompt}`,
+        x: canvasX,
+        y: canvasY,
+        width: 320,
+        height: 280,
+        imageUrl: finalImgUrl
+      };
+      setCanvasCards(prev => [...prev, newCard]);
+      setSelectedCanvasCard(id);
+      showToast("画布图像派生成功！已生成于双击坐标。", "success");
+      setCanvasPopupDraw(null);
+      setPopupDrawPrompt("");
+    } catch (err: any) {
+      showToast(`绘图发生意外: ${err.message}`, "error");
+    } finally {
+      setIsPopupDrawing(false);
+    }
+  };
+
+  const handlePopupCanvasChat = async (canvasX: number, canvasY: number) => {
+    if (!popupChatPrompt.trim()) {
+      showToast("请输入撰写大纲", "error");
+      return;
+    }
+    setIsPopupWriting(true);
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-access-code": accessCode
+        },
+        body: JSON.stringify({
+          model: popupChatModel,
+          messages: [{ role: "user", content: popupChatPrompt }]
+        })
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `请求失败，状态码: ${response.status}`);
+      }
+      const data = await response.json();
+      const txt = data.choices?.[0]?.message?.content || "";
+      if (!txt) {
+        throw new Error("接口返回的文案为空，请重试。");
+      }
+
+      const id = `card-${Date.now()}`;
+      const newCard: CanvasCard = {
+        id,
+        type: "result",
+        title: `✨ AI 润色文案`,
+        content: txt,
+        x: canvasX,
+        y: canvasY,
+        width: 300,
+        height: 180
+      };
+      setCanvasCards(prev => [...prev, newCard]);
+      setSelectedCanvasCard(id);
+      showToast("专属智能文案撰写成功！已生成于双击坐标。", "success");
+      setCanvasPopupChat(null);
+      setPopupChatPrompt("");
+    } catch (err: any) {
+      showToast(`文案生成失败: ${err.message}`, "error");
+    } finally {
+      setIsPopupWriting(false);
+    }
+  };
+
   // Canvas Persistence serialization downloads and uploads
   const handleExportCanvas = () => {
     try {
@@ -851,14 +1014,14 @@ export default function App() {
 
 
   return (
-    <div className="relative min-h-screen flex flex-col bg-slate-50/40 text-slate-800 font-sans tracking-tight overflow-x-hidden">
+    <div className="relative min-h-screen flex flex-col bg-white text-slate-800 font-sans tracking-tight overflow-x-hidden">
       
-      {/* Modern Premium Ambient Glowing Animated Background Blobs */}
+      {/* Modern Premium Ambient Glowing Animated Background Blobs - Dimmed dramatically for commercial cleanliness */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
-        <div className="absolute -top-40 -left-40 w-[35rem] h-[35rem] bg-gradient-to-tr from-indigo-200/40 to-teal-100/40 rounded-full mix-blend-multiply filter blur-[100px] opacity-70 animate-blob-1"></div>
-        <div className="absolute top-[20%] -right-40 w-[30rem] h-[30rem] bg-gradient-to-br from-indigo-100/30 to-violet-200/40 rounded-full mix-blend-multiply filter blur-[90px] opacity-65 animate-blob-2"></div>
-        <div className="absolute -bottom-40 left-[10%] w-[45rem] h-[45rem] bg-gradient-to-tr from-indigo-200/20 to-teal-200/30 rounded-full mix-blend-multiply filter blur-[120px] opacity-80 animate-blob-3"></div>
-        <div className="absolute top-[45%] left-[40%] -translate-x-1/2 -translate-y-1/2 w-[35rem] h-[35rem] bg-gradient-to-br from-rose-100/20 to-indigo-100/30 rounded-full mix-blend-multiply filter blur-[110px] opacity-50 animate-blob-1"></div>
+        <div className="absolute -top-40 -left-40 w-[35rem] h-[35rem] bg-gradient-to-tr from-indigo-200/10 to-teal-100/10 rounded-full mix-blend-multiply filter blur-[120px] opacity-[0.05] animate-blob-1"></div>
+        <div className="absolute top-[20%] -right-40 w-[30rem] h-[30rem] bg-gradient-to-br from-indigo-100/10 to-violet-200/10 rounded-full mix-blend-multiply filter blur-[100px] opacity-[0.04] animate-blob-2"></div>
+        <div className="absolute -bottom-40 left-[10%] w-[45rem] h-[45rem] bg-gradient-to-tr from-indigo-200/10 to-teal-200/10 rounded-full mix-blend-multiply filter blur-[130px] opacity-[0.05] animate-blob-3"></div>
+        <div className="absolute top-[45%] left-[40%] -translate-x-1/2 -translate-y-1/2 w-[35rem] h-[35rem] bg-gradient-to-br from-rose-100/10 to-indigo-100/10 rounded-full mix-blend-multiply filter blur-[120px] opacity-[0.04] animate-blob-1"></div>
       </div>
 
       {/* Inject custom dynamic keyframes animation styles blocks */}
@@ -985,13 +1148,13 @@ export default function App() {
                 可商用 AI SaaS 聚合站
               </span>
               <h1 className="text-3xl sm:text-5xl font-sans font-extrabold text-slate-950 tracking-tight leading-tight">
-                一个更适合牛马的 <br />
+                一个更适合创作者的 <br />
                 <span className="text-transparent bg-clip-text bg-gradient-to-r from-slate-900 via-indigo-600 to-indigo-950">
-                  AI 生产力工作台
+                  AI 工作台
                 </span>
               </h1>
               <p className="mt-4 text-xs sm:text-sm text-slate-500 leading-relaxed max-w-lg mx-auto">
-                集成高精多模型对话、图像生成、直觉式无限白板与商业 API 网关一代理，摒弃花哨、回归干净体验。
+                集成 AI 对话、图像生成、无限画布、模型 API 与创意生产力工具。
               </p>
             </div>
 
@@ -1448,7 +1611,7 @@ export default function App() {
             </aside>
 
             {/* Right panel: Images visual output */}
-            <section className="flex-1 bg-slate-100 p-6 overflow-y-auto">
+            <section className="flex-1 bg-slate-100 p-6 overflow-y-auto flex flex-col min-h-0">
               
               {/* Header inside result section */}
               <div className="flex items-center justify-between mb-6">
@@ -1462,21 +1625,38 @@ export default function App() {
                 </div>
                 
                 <span className="text-[11px] text-slate-400 font-semibold bg-white px-2.5 py-1.5 rounded-lg border border-slate-200">
-                  当前渲染完成数: {generatedImages.length}
+                  当前已生成作品: {generatedImages.length}
                 </span>
               </div>
 
               {/* Loader widget */}
               {isDrawing && (
-                <div className="p-8 bg-white rounded-3xl border border-slate-200/60 shadow-sm flex flex-col items-center justify-center text-center max-w-lg mx-auto mb-6 animate-pulse">
-                  <div className="h-10 w-10 flex items-center justify-center rounded-full bg-emerald-50 text-emerald-600 mb-3">
+                <div className="p-8 bg-white/90 backdrop-blur-md rounded-3xl border border-slate-200/60 shadow-lg flex flex-col items-center justify-center text-center max-w-lg mx-auto mb-6 animate-pulse z-10">
+                  <div className="h-10 w-10 flex items-center justify-center rounded-full bg-emerald-50 text-emerald-600 mb-3 border border-emerald-100">
                     <Activity className="w-5 h-5 text-emerald-600 animate-spin" />
                   </div>
-                  <h4 className="text-xs font-extrabold text-slate-900">
-                    正在执行图像网关生成序列
+                  <h4 className="text-xs font-extrabold text-slate-900 animate-bounce">
+                    正在执行图像网关生成序列...
                   </h4>
                   <p className="text-[11px] text-slate-400 max-w-xs mt-1">
-                    系统正向你的 New API 端点安全上报，该过程通常需要 10-15 秒以返回超清像素图像。请稍等。
+                    系统正向您的 New API 端点安全上报，该过程通常需要 10-15 秒以返回超清像素图像。整个过程基于离线防劫持代理。
+                  </p>
+                </div>
+              )}
+
+              {/* Empty state when there is no data and no active generation */}
+              {generatedImages.length === 0 && !isDrawing && (
+                <div className="flex-1 flex flex-col items-center justify-center p-12 bg-white/70 backdrop-blur-xs rounded-3xl border border-slate-200/50 shadow-[0_8px_30px_rgba(0,0,0,0.01)] text-center max-w-xl mx-auto my-auto w-full">
+                  <div className="h-12 w-12 flex items-center justify-center rounded-full bg-emerald-50 border border-emerald-150 text-emerald-600 mb-4 animate-bounce">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <h3 className="text-xs font-black text-slate-900 tracking-tight">输入灵感提示词，启动商用级图像生成</h3>
+                  <div className="h-[1px] bg-slate-200/60 w-24 my-3 mx-auto"></div>
+                  <p className="text-[11px] text-slate-400 leading-relaxed max-w-sm">
+                    通过 RONIN AI LAB 绘图控制台直接对接行业旗舰级精绘端点。无需购买高昂官方账号，即可非线性生产高画幅产品原稿、插画底片、排版配图。
+                  </p>
+                  <p className="text-[10px] text-slate-350 mt-4 font-mono">
+                    💡 请在左侧参数栏输入描述，并点击「启动高精图片渲染」按钮
                   </p>
                 </div>
               )}
@@ -1486,36 +1666,84 @@ export default function App() {
                 {generatedImages.map((img, idx) => (
                   <div 
                     key={idx}
-                    className="bg-white rounded-[24px] overflow-hidden border border-slate-200/60 shadow-[0_4px_24px_rgba(0,0,0,0.01)] group"
+                    className="bg-white rounded-[24px] overflow-hidden border border-slate-200/60 shadow-[0_4px_24px_rgba(0,0,0,0.01)] group relative"
                   >
                     
                     {/* Visual container */}
-                    <div className="relative aspect-square overflow-hidden bg-slate-900 flex items-center justify-center">
+                    <div className="relative aspect-square overflow-hidden bg-slate-100 flex items-center justify-center">
                       <img 
                         src={img.url} 
                         alt={img.prompt}
                         className="w-full h-full object-cover group-hover:scale-105 duration-700"
+                        referrerPolicy="no-referrer"
                       />
                       
                       {/* Notice Overlay if fallbacked */}
                       {img.isFallback && (
-                        <div className="absolute top-2.5 left-2.5 right-2.5 p-2 rounded-xl bg-amber-950/80 text-amber-100 text-[10px] font-semibold flex gap-2 items-start backdrop-blur-xs">
+                        <div className="absolute top-2.5 left-2.5 right-2.5 p-2 rounded-xl bg-amber-950/80 text-amber-100 text-[10px] font-semibold flex gap-2 items-start backdrop-blur-xs z-10">
                           <Info className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                           <span>未在本地配置 NEWAPI_KEY，已启动高保真样本图以供测试体验。</span>
                         </div>
                       )}
 
-                      {/* Hover action download cards */}
-                      <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition duration-300 flex items-center justify-center gap-2">
-                        <a 
-                          href={img.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="p-2.5 bg-white hover:bg-slate-100 text-slate-950 rounded-full shadow-lg transition"
-                          title="在新网页中查看大原图"
-                        >
-                          <Maximize2 className="w-4 h-4" />
-                        </a>
+                      {/* Hover actions menu cards */}
+                      <div className="absolute inset-0 bg-slate-950/80 opacity-0 group-hover:opacity-100 transition duration-300 flex flex-col items-center justify-center gap-3.5 p-4 z-10 text-center">
+                        <p className="text-[10.5px] text-slate-200 line-clamp-3 px-2 leading-relaxed font-medium">
+                          提示词: {img.prompt}
+                        </p>
+                        
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                          <a 
+                            href={img.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-2 py-1.5 bg-white hover:bg-slate-100 text-slate-950 rounded-lg text-[10px] font-bold shadow transition flex items-center gap-1 cursor-pointer"
+                            title="在新网页中查看大原图"
+                          >
+                            <Maximize2 className="w-3 h-3" />
+                            <span>在新窗口浏览</span>
+                          </a>
+
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(img.prompt);
+                              showToast("已成功复制提示词底稿至剪贴板", "success");
+                            }}
+                            className="p-2 py-1.5 bg-white hover:bg-slate-100 text-slate-950 rounded-lg text-[10px] font-bold shadow transition flex items-center gap-1 cursor-pointer"
+                            title="复制提示词"
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>复制提示词</span>
+                          </button>
+
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              // Send to workspace infinite canvas
+                              const id = `card-${Date.now()}`;
+                              const newCard: CanvasCard = {
+                                id,
+                                type: "image",
+                                title: `🎨 AI 渲染投放: ${img.prompt.slice(0, 10)}...`,
+                                content: `渲染模型: gpt-image-1 | 生成于: ${img.timestamp}`,
+                                x: Math.round((Math.random() - 0.5) * 160),
+                                y: Math.round((Math.random() - 0.5) * 160),
+                                width: 320,
+                                height: 280,
+                                imageUrl: img.url
+                              };
+                              setCanvasCards(prev => [...prev, newCard]);
+                              setSelectedCanvasCard(id);
+                              showToast("图像成功合流发送至「无限画布」，请切换到白板选项卡进行查摆编排！", "success");
+                            }}
+                            className="p-2 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[10px] font-extrabold shadow transition flex items-center gap-1 cursor-pointer"
+                            title="投放至底稿画布"
+                          >
+                            <Layers className="w-3 h-3 text-emerald-300" />
+                            <span>投放至白板</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -1784,6 +2012,7 @@ export default function App() {
                 onMouseMove={handleCanvasMouseMove}
                 onMouseUp={handleCanvasMouseUp}
                 onMouseLeave={handleCanvasMouseUp}
+                onDoubleClick={handleCanvasDoubleClick}
               >
                 
                 {/* Micro repeating grid indicator backing */}
@@ -1796,6 +2025,29 @@ export default function App() {
                   }}
                 />
 
+                {/* Invisible Inputs for double-click local coordinate loading */}
+                <input 
+                  type="file" 
+                  ref={canvasImageFileInputRef}
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (doubleClickMenu) {
+                      handleLocalImageCoordUpload(e, doubleClickMenu.canvasX, doubleClickMenu.canvasY);
+                    }
+                  }}
+                />
+                <input 
+                  type="file" 
+                  ref={canvasAttachmentFileInputRef}
+                  className="hidden"
+                  onChange={(e) => {
+                    if (doubleClickMenu) {
+                      handleLocalAttachmentCoordUpload(e, doubleClickMenu.canvasX, doubleClickMenu.canvasY);
+                    }
+                  }}
+                />
+
                 {/* Transform Scaler/Translator coordinate engine system */}
                 <div 
                   className="absolute"
@@ -1804,6 +2056,22 @@ export default function App() {
                     transformOrigin: "0 0"
                   }}
                 >
+                  {/* Empty Whiteboard Canvas Cue */}
+                  {canvasCards.length === 0 && (
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center text-center p-8 bg-white/75 backdrop-blur-md rounded-3xl border border-slate-200 shadow-xl max-w-sm pointer-events-none select-none z-10 w-80">
+                      <div className="h-10 w-10 flex items-center justify-center rounded-full bg-indigo-50 border border-indigo-100 text-indigo-650 mb-3 animate-pulse">
+                        <Layers className="w-5 h-5 text-indigo-600" />
+                      </div>
+                      <h4 className="text-xs font-black text-slate-900 tracking-tight">空白无限画布</h4>
+                      <div className="h-[1px] bg-slate-200/50 my-2 w-full"></div>
+                      <p className="text-[10px] text-slate-500 leading-relaxed">
+                        👉 <span className="font-bold text-slate-700">双击画布</span> 唤起操作菜单添加内容 <br />
+                        ✋ <span className="font-bold text-slate-700">鼠标拖拽</span> 移动视野进行平移平布 <br />
+                        ⚙️ <span className="font-bold text-slate-700">鼠标滚轮</span> 无极缩放 (支持右下角重置)
+                      </p>
+                    </div>
+                  )}
+
                   {canvasCards.map((card) => {
                     const isSelected = selectedCanvasCard === card.id;
                     
@@ -1992,6 +2260,292 @@ export default function App() {
                   </button>
                 </div>
 
+                {doubleClickMenu && (
+                  <div 
+                    className="fixed z-50 bg-white shadow-2xl rounded-2xl border border-slate-200 p-1.5 w-52 text-slate-800 animate-in fade-in zoom-in-95 duration-100"
+                    style={{ 
+                      left: Math.min(window.innerWidth - 220, doubleClickMenu.x), 
+                      top: Math.min(window.innerHeight - 380, doubleClickMenu.y) 
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="px-3 py-2 text-[10px] font-extrabold text-slate-400 border-b border-slate-100 uppercase tracking-widest leading-none mb-1">
+                      画布操作菜单
+                    </div>
+                    
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = `card-${Date.now()}`;
+                        const newCard: CanvasCard = {
+                          id,
+                          type: "note",
+                          title: "💡 新建灵感便签",
+                          content: "双击这里在此处撰写文字灵感内容...",
+                          x: doubleClickMenu.canvasX,
+                          y: doubleClickMenu.canvasY,
+                          width: 260,
+                          height: 140
+                        };
+                        setCanvasCards(prev => [...prev, newCard]);
+                        setSelectedCanvasCard(id);
+                        showToast("新建灵感便签成功！", "success");
+                        setDoubleClickMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-slate-100 rounded-xl transition font-medium text-slate-750 hover:text-slate-900"
+                    >
+                      <StickyNote className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span>添加灵感便签</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const id = `card-${Date.now()}`;
+                        const newCard: CanvasCard = {
+                          id,
+                          type: "result",
+                          title: "📝 新建文本内容",
+                          content: "双击这里在此处输入富文本或提示词汇...",
+                          x: doubleClickMenu.canvasX,
+                          y: doubleClickMenu.canvasY,
+                          width: 280,
+                          height: 140
+                        };
+                        setCanvasCards(prev => [...prev, newCard]);
+                        setSelectedCanvasCard(id);
+                        showToast("新建文本卡片成功！", "success");
+                        setDoubleClickMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-slate-100 rounded-xl transition font-medium text-slate-750 hover:text-slate-900"
+                    >
+                      <FileText className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                      <span>添加文本卡片</span>
+                    </button>
+
+                    <div className="h-[1px] bg-slate-150 my-1"></div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        canvasImageFileInputRef.current?.click();
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-slate-100 rounded-xl transition font-medium text-slate-750 hover:text-slate-900"
+                    >
+                      <ImageIcon className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                      <span>上传图片</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        canvasAttachmentFileInputRef.current?.click();
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-slate-100 rounded-xl transition font-medium text-slate-750 hover:text-slate-900"
+                    >
+                      <Paperclip className="w-3.5 h-3.5 text-teal-500 shrink-0" />
+                      <span>上传附件</span>
+                    </button>
+
+                    <div className="h-[1px] bg-slate-150 my-1"></div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCanvasPopupDraw({ canvasX: doubleClickMenu.canvasX, canvasY: doubleClickMenu.canvasY });
+                        setDoubleClickMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-slate-100 rounded-xl transition font-medium text-slate-755 hover:text-slate-900"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 text-pink-500 shrink-0" />
+                      <span>AI 生成图片</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCanvasPopupChat({ canvasX: doubleClickMenu.canvasX, canvasY: doubleClickMenu.canvasY });
+                        setDoubleClickMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-slate-100 rounded-xl transition font-medium text-slate-755 hover:text-slate-900"
+                    >
+                      <Bot className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                      <span>AI 生成文案</span>
+                    </button>
+
+                    <div className="h-[1px] bg-slate-150 my-1"></div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        showToast("高清增强功能即将开放。", "info");
+                        setDoubleClickMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-slate-100 rounded-xl transition font-medium text-slate-700 hover:text-slate-900"
+                    >
+                      <Zap className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <span>一键高清</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedCanvasCard) {
+                          deleteCanvasCard(selectedCanvasCard);
+                          showToast("已删除选中的白板卡片", "success");
+                        } else {
+                          showToast("请先在画布中选择要删除的卡片", "info");
+                        }
+                        setDoubleClickMenu(null);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-rose-50 text-rose-650 rounded-xl transition font-bold"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-550 shrink-0" />
+                      <span>删除白板卡片</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* AI Generate Image Inline Modal Overlay */}
+                {canvasPopupDraw && (
+                  <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl border border-slate-200 p-6 w-full max-w-md shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-black text-slate-900 flex items-center gap-1.5 animate-pulse">
+                          <Sparkles className="w-4 h-4 text-emerald-500 animate-spin" style={{ animationDuration: '3s' }} />
+                          <span>AI 生成图像并投放画布</span>
+                        </h3>
+                        <button 
+                          onClick={() => setCanvasPopupDraw(null)}
+                          className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-650 transition"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-1">写下画面提示词 prompt:</label>
+                          <textarea
+                            rows={3}
+                            value={popupDrawPrompt}
+                            onChange={(e) => setPopupDrawPrompt(e.target.value)}
+                            placeholder="写下灵感词：例如高级黑金质感包装的可乐罐处于反光的大理石太空基底..."
+                            className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:border-emerald-500"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div>
+                            <span className="block text-[10px] text-slate-400 font-bold mb-1">选择意境模型</span>
+                            <select
+                              value={popupDrawModel}
+                              onChange={(e) => setPopupDrawModel(e.target.value)}
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none"
+                            >
+                              <option value="gpt-image-1">gpt-image-1 (默认排版)</option>
+                              <option value="stable-diffusion-3">Stable Diffusion 3.5</option>
+                            </select>
+                          </div>
+                          <div>
+                            <span className="block text-[10px] text-slate-400 font-bold mb-1">输出规格尺寸</span>
+                            <select
+                              value={popupDrawSize}
+                              onChange={(e) => setPopupDrawSize(e.target.value)}
+                              className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none"
+                            >
+                              <option value="1024x1024">1024x1024 (1:1)</option>
+                              <option value="16:9">16:9 比例大屏</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setCanvasPopupDraw(null)}
+                          className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50"
+                        >
+                          取消
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isPopupDrawing}
+                          onClick={() => handlePopupCanvasDraw(canvasPopupDraw.canvasX, canvasPopupDraw.canvasY)}
+                          className="flex-1 py-2.5 rounded-xl bg-slate-950 text-white text-xs font-bold hover:bg-emerald-600 transition flex items-center justify-center gap-1.5 disabled:bg-slate-300"
+                        >
+                          <Sparkles className={`w-3.5 h-3.5 text-emerald-400 ${isPopupDrawing ? 'animate-spin' : ''}`} />
+                          <span>{isPopupDrawing ? "AI 渲染色彩中..." : "合成至双击位置"}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* AI Generate Text Inline Modal Overlay */}
+                {canvasPopupChat && (
+                  <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+                    <div className="bg-white rounded-3xl border border-slate-200 p-6 w-full max-w-md shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-black text-slate-900 flex items-center gap-1.5">
+                          <Bot className="w-4 h-4 text-indigo-550" />
+                          <span>AI 撰写文案并投放画布</span>
+                        </h3>
+                        <button 
+                          onClick={() => setCanvasPopupChat(null)}
+                          className="p-1 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-650 transition"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 mb-1">写下您的文案主题或撰写大纲:</label>
+                          <textarea
+                            rows={3}
+                            value={popupChatPrompt}
+                            onChange={(e) => setPopupChatPrompt(e.target.value)}
+                            placeholder="写一句带有高级感氛围的奢华产品宣传口号..."
+                            className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:border-indigo-500"
+                          />
+                        </div>
+
+                        <div>
+                          <span className="block text-[10px] text-slate-400 font-bold mb-1">选择对话大模型</span>
+                          <select
+                            value={popupChatModel}
+                            onChange={(e) => setPopupChatModel(e.target.value)}
+                            className="w-full p-2 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none"
+                          >
+                            <option value="gpt-4o-mini">gpt-4o-mini (经济极速)</option>
+                            <option value="deepseek-chat">deepseek-chat (满血推理)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => setCanvasPopupChat(null)}
+                          className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50"
+                        >
+                          取消
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isPopupWriting}
+                          onClick={() => handlePopupCanvasChat(canvasPopupChat.canvasX, canvasPopupChat.canvasY)}
+                          className="flex-1 py-2.5 rounded-xl bg-slate-950 text-white text-xs font-bold hover:bg-indigo-600 transition flex items-center justify-center gap-1.5 disabled:bg-slate-300"
+                        >
+                          <FileText className={`w-3.5 h-3.5 text-indigo-305 ${isPopupWriting ? 'animate-bounce' : ''}`} />
+                          <span>{isPopupWriting ? "文案引擎极速拟合..." : "合成至双击位置"}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Right Panel: Figma-inspired responsive Card Attributes Inspector Sidebar */}

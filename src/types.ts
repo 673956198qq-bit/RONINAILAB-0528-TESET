@@ -49,6 +49,8 @@ export interface CanvasCard {
   height: number;
   imageUrl?: string;
   isEditing?: boolean;
+  fileName?: string;
+  fileSize?: string;
 }
 
 export interface DocCatalog {
