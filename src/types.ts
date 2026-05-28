@@ -40,7 +40,7 @@ export interface PricingPlan {
 
 export interface CanvasCard {
   id: string;
-  type: "note" | "prompt" | "image";
+  type: "note" | "prompt" | "image" | "result";
   title: string;
   content: string;
   x: number;

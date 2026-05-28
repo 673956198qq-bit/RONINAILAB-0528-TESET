@@ -98,39 +98,59 @@ export default function App() {
   ]);
 
   // --- Infinite Canvas Workspace States ---
-  const [canvasCards, setCanvasCards] = useState<CanvasCard[]>([
-    {
-      id: "card-inst-1",
-      type: "note",
-      title: "💡 无限创意看板指引",
-      content: "这是一个自由拖拽平移的灵感空间。您可以：\n1. 双击卡片内容开始编辑文字。\n2. 点击右上方绿色「生成图到画布」快速创作海报。\n3. 按住鼠标或拖动卡片顶部重新布局。",
-      x: 80,
-      y: 90,
-      width: 280,
-      height: 180
-    },
-    {
-      id: "card-prompt-1",
-      type: "prompt",
-      title: "✍️ 黑金极客海报词",
-      content: "A futuristic cyberpunk microchip core floating in pristine black water, subtle neon gold tracing, ultra-realistic visual, cinematic ambient light.",
-      x: 400,
-      y: 60,
-      width: 280,
-      height: 150
-    },
-    {
-      id: "card-img-1",
-      type: "image",
-      title: "🎨 灵感底稿",
-      content: "黑金极速灵感",
-      x: 180,
-      y: 320,
-      width: 320,
-      height: 240,
-      imageUrl: "https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?q=80&w=1024&auto=format&fit=crop"
+  const [canvasCards, setCanvasCards] = useState<CanvasCard[]>(() => {
+    if (typeof window !== "undefined") {
+      const persisted = localStorage.getItem("ronin_canvas_cards");
+      if (persisted) {
+        try {
+          return JSON.parse(persisted);
+        } catch (e) {}
+      }
     }
-  ]);
+    return [
+      {
+        id: "card-inst-1",
+        type: "note",
+        title: "💡 无限创意看板指引",
+        content: "这是一个自由拖拽平移的灵感空间。您可以：\n1. 在左侧面板生成 AI 图像、文案、或拖入本地底稿上传。\n2. 双击或选择卡片即可即时在右侧面板修改和调整卡片尺寸。\n3. 拖动卡片标题行进行卡片重新排布，高亮层级会自动置顶。\n4. 支持鼠标滚轮无极缩放，随时点击右下角复位。",
+        x: 80,
+        y: 80,
+        width: 300,
+        height: 180
+      },
+      {
+        id: "card-prompt-1",
+        type: "prompt",
+        title: "✍️ 黑金极客海报提示词",
+        content: "A futuristic cyberpunk microchip core floating in pristine black water, subtle neon gold tracing, ultra-realistic visual, cinematic ambient light.",
+        x: 420,
+        y: 80,
+        width: 280,
+        height: 140
+      },
+      {
+        id: "card-result-1",
+        type: "result",
+        title: "✨ AI 润色文案",
+        content: "「极黑核心，聚烁金芒」\n颠覆秩序的微芯引擎，以原厂网关为您的创想续航。",
+        x: 420,
+        y: 250,
+        width: 280,
+        height: 140
+      },
+      {
+        id: "card-img-1",
+        type: "image",
+        title: "🎨 灵感渲染底稿",
+        content: "黑金极速概念图",
+        x: 80,
+        y: 300,
+        width: 300,
+        height: 250,
+        imageUrl: "https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?q=80&w=1024&auto=format&fit=crop"
+      }
+    ];
+  });
   const [canvasScale, setCanvasScale] = useState(1);
   const [canvasTranslate, setCanvasTranslate] = useState({ x: 0, y: 0 });
   const [isDraggingCanvas, setIsDraggingCanvas] = useState(false);
@@ -140,6 +160,11 @@ export default function App() {
   const [canvasFile, setCanvasFile] = useState<File | null>(null);
   const [canvasFilePreview, setCanvasFilePreview] = useState<string | null>(null);
   const [canvasPromptInput, setCanvasPromptInput] = useState("");
+  const [canvasChatRequestInput, setCanvasChatRequestInput] = useState("");
+  const [isCanvasImageGenerating, setIsCanvasImageGenerating] = useState(false);
+  const [isCanvasTextGenerating, setIsCanvasTextGenerating] = useState(false);
+  const [canvasImgModel, setCanvasImgModel] = useState("gpt-image-1");
+  const [canvasImgSize, setCanvasImgSize] = useState("1024x1024");
   const canvasRef = useRef<HTMLDivElement>(null);
 
   // --- Models Filter State ---
@@ -160,6 +185,12 @@ export default function App() {
       localStorage.setItem("ronin_chat_sessions", JSON.stringify(chatSessions));
     }
   }, [chatSessions]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("ronin_canvas_cards", JSON.stringify(canvasCards));
+    }
+  }, [canvasCards]);
 
   useEffect(() => {
     if (chatBottomRef.current) {
@@ -396,18 +427,12 @@ export default function App() {
       }
 
       const data = await response.json();
-      
       let finalImgUrl = "";
-      let isFallbackNotice = false;
 
       if (data.data?.[0]?.b64_json) {
         finalImgUrl = `data:image/png;base64,${data.data[0].b64_json}`;
       } else if (data.data?.[0]?.url) {
         finalImgUrl = data.data[0].url;
-        if (data.data[0].fallbackNotice) {
-          isFallbackNotice = true;
-          showToast(data.data[0].fallbackNotice, "info");
-        }
       } else {
         throw new Error("接口返回的图片数据为空，请重试。");
       }
@@ -416,13 +441,12 @@ export default function App() {
         {
           url: finalImgUrl,
           prompt: drawPrompt,
-          timestamp: new Date().toLocaleTimeString("zh-CN"),
-          isFallback: isFallbackNotice
+          timestamp: new Date().toLocaleTimeString("zh-CN")
         },
         ...prev
       ]);
       
-      showToast("构图完毕！唯美大图已呈现。", "success");
+      showToast("构图完毕！唯美大图已呈现及陈列。", "success");
     } catch (err: any) {
       showToast(err.message || "图像渲染发生了意料外的中断。", "error");
     } finally {
@@ -430,30 +454,56 @@ export default function App() {
     }
   };
 
-  // --- Infinite Canvas Action ---
-  const addCardToCanvas = (type: "note" | "prompt" | "image", customUrl?: string) => {
+  // --- Infinite Canvas Actions & Mathematical Physics ---
+  const addCardToCanvas = (type: "note" | "prompt" | "image" | "result", customUrl?: string) => {
     const id = `card-${Date.now()}`;
+    
+    // Calculate viewport center so the new card lands nicely in front of the creator
+    const viewportWidth = canvasRef.current?.clientWidth || 800;
+    const viewportHeight = canvasRef.current?.clientHeight || 600;
+    
+    const centerX = (viewportWidth / 2 - canvasTranslate.x) / canvasScale - 130;
+    const centerY = (viewportHeight / 2 - canvasTranslate.y) / canvasScale - 80;
+
     const newCard: CanvasCard = {
       id,
       type,
-      title: type === "note" ? "📝 极速便签" : type === "prompt" ? "✍️ 灵感提示词" : "🖼️ 创作者卡片",
-      content: type === "note" ? "双击修改文本..." : type === "prompt" ? "A cinematic illustration..." : "AI 构想图",
-      x: 100 - canvasTranslate.x,
-      y: 100 - canvasTranslate.y,
-      width: 250,
-      height: type === "image" ? 280 : 140,
-      imageUrl: customUrl || (type === "image" ? "https://images.unsplash.com/photo-1620712943543-bcc4688e7485?q=80&w=512" : undefined)
+      title: type === "note" 
+        ? "📝 极速便签" 
+        : type === "prompt" 
+          ? "✍️ 灵感提示词" 
+          : type === "result"
+            ? "✨ AI文案"
+            : "🖼️ 创意画幅",
+      content: type === "note" 
+        ? "点击这里开始撰写灵感..." 
+        : type === "prompt" 
+          ? "A cinematic photo of a cyberpunk ronin character standing in digital rain..." 
+          : type === "result"
+            ? "「万象融汇，瞬息创构」\n您的 AI 画布内容生成于此。"
+            : "灵感参考特征",
+      x: Math.max(20, Math.round(centerX)),
+      y: Math.max(20, Math.round(centerY)),
+      width: type === "image" ? 300 : 260,
+      height: type === "image" ? 250 : 140,
+      imageUrl: customUrl
     };
-    setCanvasCards([...canvasCards, newCard]);
-    showToast("已成功向画布添加新卡片", "success");
+
+    setCanvasCards(prev => [...prev, newCard]);
+    setSelectedCanvasCard(id); // focus on newly loaded card
+    showToast(`已添加新卡片「${newCard.title}」至工作台`, "success");
   };
 
   const deleteCanvasCard = (cid: string) => {
-    setCanvasCards(canvasCards.filter(c => c.id !== cid));
+    setCanvasCards(prev => prev.filter(c => c.id !== cid));
+    if (selectedCanvasCard === cid) {
+      setSelectedCanvasCard(null);
+    }
+    showToast("卡片已从当前画布清除", "info");
   };
 
   const handleCardContentChange = (cid: string, newText: string) => {
-    setCanvasCards(canvasCards.map(c => {
+    setCanvasCards(prev => prev.map(c => {
       if (c.id === cid) {
         return { ...c, content: newText };
       }
@@ -462,7 +512,7 @@ export default function App() {
   };
 
   const handleCardTitleChange = (cid: string, newTitle: string) => {
-    setCanvasCards(canvasCards.map(c => {
+    setCanvasCards(prev => prev.map(c => {
       if (c.id === cid) {
         return { ...c, title: newTitle };
       }
@@ -470,32 +520,62 @@ export default function App() {
     }));
   };
 
-  // Canvas Mouse interactions (zoom and drag)
+  // Draggable Card Physics under Scale Zoom
+  const handleCardDragStart = (e: React.MouseEvent, card: CanvasCard) => {
+    e.stopPropagation();
+    
+    // Bring clicked card to active z-index rendering top layer!
+    setCanvasCards(prev => {
+      const filtered = prev.filter(c => c.id !== card.id);
+      return [...filtered, card];
+    });
+
+    setSelectedCanvasCard(card.id);
+    
+    // Calculate locked coordinate offset in canvas space
+    const mouseCanvasX = (e.clientX - canvasTranslate.x) / canvasScale;
+    const mouseCanvasY = (e.clientY - canvasTranslate.y) / canvasScale;
+    
+    const offsetX = mouseCanvasX - card.x;
+    const offsetY = mouseCanvasY - card.y;
+
+    setActiveCardDrag({
+      id: card.id,
+      offsetX,
+      offsetY
+    });
+  };
+
   const handleCanvasMouseDown = (e: React.MouseEvent) => {
     if (activeCardDrag) return;
+    // Do not drag canvas if we are interacting with interactive card nodes
     if (e.target instanceof HTMLElement && e.target.closest(".canvas-card")) return;
     setIsDraggingCanvas(true);
-    setCanvasDragStart({ x: e.clientX - canvasTranslate.x, y: e.clientY - canvasTranslate.y });
+    setCanvasDragStart({
+      x: e.clientX - canvasTranslate.x,
+      y: e.clientY - canvasTranslate.y
+    });
   };
 
   const handleCanvasMouseMove = (e: React.MouseEvent) => {
     if (isDraggingCanvas) {
       setCanvasTranslate({
-        x: e.clientX - canvasDragStart.x,
-        y: e.clientY - canvasDragStart.y
+        x: Math.round(e.clientX - canvasDragStart.x),
+        y: Math.round(e.clientY - canvasDragStart.y)
       });
     } else if (activeCardDrag) {
       const { id, offsetX, offsetY } = activeCardDrag;
-      // Calculate inside current scale
-      const deltaX = e.clientX - offsetX;
-      const deltaY = e.clientY - offsetY;
       
+      // Calculate current mouse coordinates in canvas space
+      const mouseCanvasX = (e.clientX - canvasTranslate.x) / canvasScale;
+      const mouseCanvasY = (e.clientY - canvasTranslate.y) / canvasScale;
+
       setCanvasCards(prev => prev.map(c => {
         if (c.id === id) {
           return {
             ...c,
-            x: Math.round(deltaX),
-            y: Math.round(deltaY)
+            x: Math.round(mouseCanvasX - offsetX),
+            y: Math.round(mouseCanvasY - offsetY)
           };
         }
         return c;
@@ -508,18 +588,29 @@ export default function App() {
     setActiveCardDrag(null);
   };
 
-  const handleCardDragStart = (e: React.MouseEvent, card: CanvasCard) => {
-    e.stopPropagation();
-    // Offset relative to actual page coordinate
-    setActiveCardDrag({
-      id: card.id,
-      offsetX: e.clientX - card.x,
-      offsetY: e.clientY - card.y
-    });
-    setSelectedCanvasCard(card.id);
-  };
+  // Drag-Scroll Zoom Event attaching hook
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el || currentRoute !== "canvas") return;
 
-  // Canvas File Upload handle
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const zoomIntensity = 0.05;
+      const scaleDelta = e.deltaY < 0 ? zoomIntensity : -zoomIntensity;
+      
+      setCanvasScale(prev => {
+        const nextScale = Math.min(2, Math.max(0.4, prev + scaleDelta));
+        return parseFloat(nextScale.toFixed(2));
+      });
+    };
+
+    el.addEventListener("wheel", handleWheel, { passive: false });
+    return () => {
+      el.removeEventListener("wheel", handleWheel);
+    };
+  }, [canvasRef.current, currentRoute, canvasTranslate]);
+
+  // Canvas File Upload handle (Reference attachment)
   const handleCanvasFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files[0]) {
@@ -528,7 +619,7 @@ export default function App() {
       const reader = new FileReader();
       reader.onloadend = () => {
         setCanvasFilePreview(reader.result as string);
-        showToast(`已装载参考文件: ${file.name}，可作为生图的语义引流！`, "info");
+        showToast(`已装载生手绘图底蕴: ${file.name}！`, "info");
       };
       reader.readAsDataURL(file);
     }
@@ -539,12 +630,15 @@ export default function App() {
     setCanvasFilePreview(null);
   };
 
+  // Generate Image from AI on canvas
   const handleCanvasInternalDraw = async () => {
     if (!canvasPromptInput.trim()) {
-      showToast("制作画布生图前，请先写点灵感提示词", "info");
+      showToast("若要在画布内渲染图像，请输入创意提示词", "info");
       return;
     }
-    showToast("画布连通 New API 中，正在向桌面输出节点...", "info");
+    
+    setIsCanvasImageGenerating(true);
+    showToast("正在通过 API 创作，稍后放入视野中心...", "info");
     
     try {
       const response = await fetch("/api/image", {
@@ -555,15 +649,15 @@ export default function App() {
         },
         body: JSON.stringify({
           prompt: canvasPromptInput + (canvasFile ? " (配合参考底稿)" : ""),
-          model: "gpt-image-1",
-          size: "1024x1024"
+          model: canvasImgModel,
+          size: canvasImgSize
         })
       });
 
       if (!response.ok) {
         if (response.status === 401) {
           setIsAccessModalOpen(true);
-          throw new Error("请先验证 APP_ACCESS_CODE 访问权限");
+          throw new Error("请先验证安全性密钥防护 (APP_ACCESS_CODE)");
         }
         const errJson = await response.json().catch(() => ({}));
         throw new Error(errJson.message || "请求出错了");
@@ -577,28 +671,182 @@ export default function App() {
         genUrl = res.data[0].url;
       }
 
-      if (!genUrl) throw new Error("绘图未返回可读取的图片字段");
+      if (!genUrl) throw new Error("代理网关未反馈可用像素图像");
 
-      // Place a picture card exactly onto our workspace coordinates
+      // Place in center of visual viewport
+      const viewportWidth = canvasRef.current?.clientWidth || 800;
+      const viewportHeight = canvasRef.current?.clientHeight || 600;
+      const centerX = (viewportWidth / 2 - canvasTranslate.x) / canvasScale - 160;
+      const centerY = (viewportHeight / 2 - canvasTranslate.y) / canvasScale - 125;
+
       const id = `card-${Date.now()}`;
       const newCard: CanvasCard = {
         id,
         type: "image",
-        title: `🎨 创想: ${canvasPromptInput.slice(0, 10)}...`,
+        title: `🎨 AI原画: ${canvasPromptInput.slice(0, 10)}...`,
         content: canvasPromptInput,
-        x: 250 - canvasTranslate.x,
-        y: 200 - canvasTranslate.y,
+        x: Math.max(20, Math.round(centerX)),
+        y: Math.max(20, Math.round(centerY)),
         width: 320,
-        height: 250,
+        height: 280,
         imageUrl: genUrl
       };
+
       setCanvasCards(prev => [...prev, newCard]);
       setCanvasPromptInput("");
-      showToast("极品美图生成成功！已插入您当前的无线画布中央。", "success");
+      showToast("极高细节美图构件生成成功！已加入到画布视野中央。", "success");
 
     } catch (err: any) {
-      showToast(`画布绘图中断: ${err.message}`, "error");
+      showToast(`生图卡顿: ${err.message}`, "error");
+    } finally {
+      setIsCanvasImageGenerating(false);
     }
+  };
+
+  // Generate Copy Writing Text onto Canvas
+  const handleCanvasInternalChat = async () => {
+    if (!canvasChatRequestInput.trim()) {
+      showToast("请输入需要生成的文案构思或大纲主题", "info");
+      return;
+    }
+
+    setIsCanvasTextGenerating(true);
+    showToast("New API 商业对话智算处理中...", "info");
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-access-code": accessCode
+        },
+        body: JSON.stringify({
+          messages: [
+            {
+              role: "user",
+              content: `您现在是一位高级科技商业文案构思大师，请根据以下需求，输出一段具有穿透力、高级留白、能够直接用于宣发或海报配文的中文文案。直接给出文案词，不要带任何前言、后记，不要多余修饰。少于100字：\n\n需求：${canvasChatRequestInput}`
+            }
+          ],
+          model: "gpt-4o-mini"
+        })
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          setIsAccessModalOpen(true);
+          throw new Error("请先验证安全性密钥防护 (APP_ACCESS_CODE)");
+        }
+        const errJson = await response.json().catch(() => ({}));
+        throw new Error(errJson.message || "写稿接口遇到了不可解响应");
+      }
+
+      const res = await response.json();
+      const textOutput = res.choices?.[0]?.message?.content || "无可读创意推荐。";
+
+      // Calculate Visual viewport center
+      const viewportWidth = canvasRef.current?.clientWidth || 800;
+      const viewportHeight = canvasRef.current?.clientHeight || 600;
+      const centerX = (viewportWidth / 2 - canvasTranslate.x) / canvasScale - 140;
+      const centerY = (viewportHeight / 2 - canvasTranslate.y) / canvasScale - 90;
+
+      const id = `card-${Date.now()}`;
+      const newCard: CanvasCard = {
+        id,
+        type: "result",
+        title: `📝 AI爆款文案: ${canvasChatRequestInput.slice(0, 10)}...`,
+        content: textOutput,
+        x: Math.max(20, Math.round(centerX)),
+        y: Math.max(20, Math.round(centerY)),
+        width: 280,
+        height: 180
+      };
+
+      setCanvasCards(prev => [...prev, newCard]);
+      setCanvasChatRequestInput("");
+      showToast("文案构图完毕！专属卡片已呈现于视野中央。", "success");
+
+    } catch (err: any) {
+      showToast(`文案延迟: ${err.message}`, "error");
+    } finally {
+      setIsCanvasTextGenerating(false);
+    }
+  };
+
+  // Local Image file upload node creator
+  const handleLocalImageUploadToCanvas = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      showToast("支持上载的格式仅限本地图像文件 (如 .png, .jpg, .webp)", "error");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const b64 = event.target?.result as string;
+      
+      const viewportWidth = canvasRef.current?.clientWidth || 800;
+      const viewportHeight = canvasRef.current?.clientHeight || 600;
+      const centerX = (viewportWidth / 2 - canvasTranslate.x) / canvasScale - 160;
+      const centerY = (viewportHeight / 2 - canvasTranslate.y) / canvasScale - 125;
+
+      const id = `card-${Date.now()}`;
+      const newCard: CanvasCard = {
+        id,
+        type: "image",
+        title: `📁 离线卡片: ${file.name}`,
+        content: `规格: ${(file.size / 1024).toFixed(1)} KB`,
+        x: Math.max(20, Math.round(centerX)),
+        y: Math.max(20, Math.round(centerY)),
+        width: 320,
+        height: 280,
+        imageUrl: b64
+      };
+
+      setCanvasCards(prev => [...prev, newCard]);
+      showToast(`本地草图「${file.name}」已注入画布`, "success");
+    };
+    reader.readAsDataURL(file);
+    e.target.value = ""; // Clear file selector input buffer
+  };
+
+  // Canvas Persistence serialization downloads and uploads
+  const handleExportCanvas = () => {
+    try {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(canvasCards, null, 2));
+      const downloadAnchor = document.createElement("a");
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `ronin-lab-canvas-${Date.now()}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      showToast("我的创意画布配置文件已顺利导出并下载！", "success");
+    } catch (error) {
+      showToast("导出画布被本地配置拦截", "error");
+    }
+  };
+
+  const handleImportCanvasJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const imported = JSON.parse(event.target?.result as string);
+        if (Array.isArray(imported)) {
+          setCanvasCards(imported);
+          showToast("已成功导入画布配置！您的灵感白板已无缝置换。", "success");
+        } else {
+          showToast("加载失败: 根节点不是合规的 Ronin 节点数组列表", "error");
+        }
+      } catch (err) {
+        showToast("配置文件语法存在污损，无法载入", "error");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = ""; // Clear loader element input buffer
   };
 
 
@@ -1297,159 +1545,252 @@ export default function App() {
             四、无限画布页面 ROUTE: CANVAS
             ======================================================== */}
         {currentRoute === "canvas" && (
-          <div className="flex-1 flex flex-col h-[calc(100vh-4.25rem)] overflow-hidden">
+          <div className="flex-1 flex flex-col h-[calc(100vh-4.25rem)] overflow-hidden" id="workspace-canvas-root">
             
-            {/* Top Command Control bar */}
-            <div className="bg-white border-b border-slate-200 px-4 py-3 flex flex-wrap items-center justify-between gap-3 shrink-0">
+            {/* Top Workspace Command Bar */}
+            <div className="bg-white border-b border-slate-200 px-5 py-3 flex flex-wrap items-center justify-between gap-4 shrink-0 shadow-xs z-20">
               
               <div className="flex items-center gap-3">
-                <span className="p-1.5 rounded-lg bg-amber-50 text-amber-700">
-                  <Layers className="w-4 h-4 text-amber-600" />
-                </span>
+                <div className="p-2 rounded-xl bg-indigo-50 text-indigo-600">
+                  <Layers className="w-4 h-4 text-indigo-600" />
+                </div>
                 <div>
-                  <h2 className="text-xs font-bold text-slate-900">
-                    创意无限编排画布 & 创作工作流
+                  <h2 className="text-xs font-black text-slate-900 tracking-tight flex items-center gap-2">
+                    <span>RONIN 创意无限白板工作台</span>
+                    <span className="bg-indigo-100 text-indigo-800 text-[9px] px-1.5 py-0.5 rounded-md font-mono">v1.1 Commercial</span>
                   </h2>
                   <span className="text-[10px] text-slate-400 block mt-0.5">
-                    拖动卡片顶部或空白画布来重新布局，画布内的生图将自动融入。
+                    融合 AI 算力与拖拽白板的非线性生产力空间。点击、拖拽卡片，支持滚轮无极缩放。
                   </span>
                 </div>
               </div>
-
-              {/* Action Toolbar to append nodes */}
+ 
+              {/* Top Persistence Actions and Builders */}
               <div className="flex flex-wrap items-center gap-2">
                 <button
+                  type="button"
                   onClick={() => addCardToCanvas("note")}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-slate-100 hover:bg-slate-200/80 text-slate-700 font-semibold transition"
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 font-bold transition"
                 >
                   <StickyNote className="w-3.5 h-3.5 text-amber-600" />
                   <span>添加灵感便签</span>
                 </button>
                 <button
+                  type="button"
                   onClick={() => addCardToCanvas("prompt")}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-slate-100 hover:bg-slate-200/80 text-slate-700 font-semibold transition"
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-800 font-bold transition"
                 >
                   <FileText className="w-3.5 h-3.5 text-indigo-600" />
                   <span>添加提示词卡</span>
                 </button>
                 <button
-                  onClick={() => addCardToCanvas("image")}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-slate-100 hover:bg-slate-200/80 text-slate-700 font-semibold transition"
+                  type="button"
+                  onClick={() => addCardToCanvas("result")}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs bg-violet-50 hover:bg-violet-100 border border-violet-200 text-violet-800 font-bold transition"
                 >
-                  <ImageIcon className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>画幅占位格</span>
+                  <Sparkles className="w-3.5 h-3.5 text-violet-600" />
+                  <span>添加空白结果卡</span>
                 </button>
 
-                <div className="h-4 w-[1px] bg-slate-200 mx-1"></div>
+                <div className="h-5 w-[1px] bg-slate-200 mx-2"></div>
 
-                {/* Clear and Scale reset */}
+                {/* Import / Export JSON operations */}
                 <button
-                  onClick={() => {
-                    setCanvasTranslate({ x: 0, y: 0 });
-                    setCanvasScale(1);
-                    showToast("画布缩放平移参数已归位", "info");
-                  }}
-                  className="px-2.5 py-1.5 rounded-lg text-xs hover:bg-slate-100 text-slate-500 transition font-semibold"
+                  type="button"
+                  onClick={handleExportCanvas}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs hover:bg-slate-100 text-slate-600 border border-slate-200 font-semibold transition"
+                  title="将当前画布状态导出为 JSON 文件流本地保存"
                 >
-                  复位视口
+                  <Download className="w-3.5 h-3.5" />
+                  <span>备份导出</span>
+                </button>
+                
+                <label className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs hover:bg-slate-100 text-slate-600 border border-slate-200 font-semibold cursor-pointer transition">
+                  <FileUp className="w-3.5 h-3.5 text-slate-500" />
+                  <span>导入恢复</span>
+                  <input
+                    type="file"
+                    accept=".json"
+                    onChange={handleImportCanvasJSON}
+                    className="hidden"
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm("确定要悉数清空画布中的所有卡片与渲染原图吗？此操作不可撤销。")) {
+                      setCanvasCards([]);
+                      setSelectedCanvasCard(null);
+                      showToast("画布卡片链已完成重置清空", "info");
+                    }
+                  }}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs hover:bg-rose-50 text-rose-600 border border-transparent font-bold transition"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>清空白板</span>
                 </button>
               </div>
 
             </div>
 
-            {/* Canvas Main Area Workspace */}
-            <div className="flex-1 flex flex-col md:flex-row relative bg-slate-100 overflow-hidden">
+            {/* Main Interactive Compartments */}
+            <div className="flex-1 flex flex-col lg:flex-row relative bg-slate-50 overflow-hidden">
               
-              {/* Left sidebar inside canvas: Quick generator */}
-              <div className="w-full md:w-80 bg-white border-b md:border-b-0 md:border-r border-slate-200 p-4 shrink-0 flex flex-col justify-between z-10">
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-900 block">
-                      ⚡ 画布直达生图引擎
+              {/* Left Panel: Creator AI Synthesizer and local assets loader */}
+              <div className="w-full lg:w-80 bg-white border-b lg:border-b-0 lg:border-r border-slate-200 p-5 shrink-0 flex flex-col justify-between z-10 overflow-y-auto">
+                <div className="space-y-6">
+                  
+                  {/* Image Generation Accourde */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-slate-900 flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-indigo-500"></span>
+                        画幅直达生图引擎
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-mono font-black uppercase">gpt-image-1</span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-slate-500">
+                        写下创意渲染灵感 prompt:
+                      </label>
+                      <textarea
+                        rows={3}
+                        value={canvasPromptInput}
+                        onChange={(e) => setCanvasPromptInput(e.target.value)}
+                        placeholder="高级黑金质感的可乐罐，置于高反光大理石太空基底，背景赛博霓虹散焦，特写极速极简..."
+                        className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:border-indigo-600"
+                      />
+                    </div>
+
+                    {/* Model & Dimensions selection for canvas image generation */}
+                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                      <div>
+                        <span className="block text-slate-400 font-bold mb-1">意境画幅模型</span>
+                        <select
+                          value={canvasImgModel}
+                          onChange={(e) => setCanvasImgModel(e.target.value)}
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg"
+                        >
+                          <option value="gpt-image-1">gpt-image-1 (黑金排版)</option>
+                          <option value="stable-diffusion-3">Stable Diffusion 3.5</option>
+                        </select>
+                      </div>
+                      <div>
+                        <span className="block text-slate-400 font-bold mb-1">尺寸像素规格</span>
+                        <select
+                          value={canvasImgSize}
+                          onChange={(e) => setCanvasImgSize(e.target.value)}
+                          className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg"
+                        >
+                          <option value="1024x1024">1024x1024 (1:1)</option>
+                          <option value="16:9">16:9 横屏海报</option>
+                          <option value="9:16">9:16 竖屏手机卡</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleCanvasInternalDraw}
+                      disabled={isCanvasImageGenerating}
+                      className="w-full py-2.5 rounded-xl text-xs font-bold text-white bg-slate-900 hover:bg-indigo-600 transition shadow-xs flex items-center justify-center gap-1.5 disabled:bg-slate-300"
+                    >
+                      <Sparkles className={`w-3.5 h-3.5 text-emerald-400 ${isCanvasImageGenerating ? 'animate-spin' : ''}`} />
+                      <span>{isCanvasImageGenerating ? "色彩矩阵配准中..." : "合成生成图像至画布"}</span>
+                    </button>
+                  </div>
+
+                  <div className="h-[1px] bg-slate-100 my-4"></div>
+
+                  {/* AI Copywriting to result card */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-slate-900 flex items-center gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-violet-500"></span>
+                        极速文案润色排版
+                      </span>
+                      <span className="text-[10px] text-slate-450 font-mono font-black">gpt-4o-mini</span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-slate-500">
+                        需要撰写的文案需求或大纲主题:
+                      </label>
+                      <input
+                        type="text"
+                        value={canvasChatRequestInput}
+                        onChange={(e) => setCanvasChatRequestInput(e.target.value)}
+                        placeholder="例如：科技发布会口号、咖啡标语..."
+                        className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:border-violet-600"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            handleCanvasInternalChat();
+                          }
+                        }}
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleCanvasInternalChat}
+                      disabled={isCanvasTextGenerating}
+                      className="w-full py-2.5 rounded-xl text-xs font-bold text-white bg-violet-600 hover:bg-slate-900 transition flex items-center justify-center gap-1.5 disabled:bg-slate-300"
+                    >
+                      <FileText className={`w-3.5 h-3.5 text-indigo-200 ${isCanvasTextGenerating ? 'animate-bounce' : ''}`} />
+                      <span>{isCanvasTextGenerating ? "文字引擎极速拟合..." : "生成爆款文案至画布"}</span>
+                    </button>
+                  </div>
+
+                  <div className="h-[1px] bg-slate-100 my-4"></div>
+
+                  {/* Local image file uploader to generate cards */}
+                  <div className="space-y-3">
+                    <span className="text-xs font-black text-slate-900 block flex items-center gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      加载本地草图参考资产 (离线)
                     </span>
-                    <span className="text-[10px] text-slate-400 font-bold">gpt-image-1</span>
-                  </div>
-
-                  {/* Canvas Prompt */}
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 mb-1">
-                      输入您的写画指令
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={canvasPromptInput}
-                      onChange={(e) => setCanvasPromptInput(e.target.value)}
-                      placeholder="写几行极速创意（例如：太空舱概念透视，荧光绿质感）..."
-                      className="w-full p-2.5 text-xs bg-slate-50 border border-slate-200 rounded-lg text-slate-800"
-                    />
-                  </div>
-
-                  {/* Reference Attachment upload widget */}
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 mb-1.5 flex items-center justify-between">
-                      <span>已加载的参考附件 / 图片 (可选)</span>
-                      {canvasFile && (
-                        <button onClick={clearCanvasFile} className="text-[9px] text-rose-500 uppercase font-bold hover:underline">
-                          清除
-                        </button>
-                      )}
-                    </label>
                     
-                    {!canvasFilePreview ? (
-                      <div className="border border-dashed border-slate-300 rounded-xl p-4 bg-slate-50 hover:bg-slate-100/50 transition relative text-center">
-                        <input
-                          type="file"
-                          accept="image/*,.pdf"
-                          onChange={handleCanvasFileChange}
-                          className="absolute inset-0 opacity-0 cursor-pointer"
-                        />
-                        <FileUp className="w-6 h-6 text-slate-400 mx-auto mb-1.5" />
-                        <span className="block text-[10px] text-slate-500 font-medium">
-                          拖入或点击上传图片/PDF文件参考物
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="relative rounded-xl overflow-hidden border border-slate-200 p-1.5 bg-slate-50">
-                        <img src={canvasFilePreview} className="w-full h-24 object-cover rounded-lg" alt="Attachment" />
-                        <div className="p-1 mt-1 flex items-center justify-between text-[10px] text-slate-500">
-                          <span className="truncate max-w-[150px] font-mono">{canvasFile?.name}</span>
-                          <span className="font-bold text-emerald-600 shrink-0">已装载</span>
-                        </div>
-                      </div>
-                    )}
+                    <div className="border border-dashed border-slate-300 rounded-2xl p-4 bg-slate-50 hover:bg-slate-100/50 transition relative text-center cursor-pointer">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleLocalImageUploadToCanvas}
+                        className="absolute inset-0 opacity-0 cursor-pointer text-[0px]"
+                      />
+                      <FileUp className="w-6 h-6 text-slate-400 mx-auto mb-1.5" />
+                      <span className="block text-[10px] text-slate-500 font-bold">
+                        选择本地参考原画图导入
+                      </span>
+                      <span className="block text-[9px] text-slate-400 mt-0.5">
+                        无需上载服务器，完美保护商用隐私
+                      </span>
+                    </div>
                   </div>
 
-                  {/* Quick generate to canvas */}
-                  <button
-                    onClick={handleCanvasInternalDraw}
-                    className="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-slate-900 transition shadow-sm"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>合成并输出至画布</span>
-                  </button>
                 </div>
 
-                <div className="p-3 bg-indigo-50/50 rounded-xl border border-indigo-100/40 text-[10px] text-indigo-800 leading-normal mt-4">
-                  <span className="font-bold block mb-0.5">🎓 创作者提示:</span>
-                  此处支持极具设计前瞻性的「画笔参考输入」，上传文件后，New API 在接收请求时将同步整合。
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-150 text-[10px] text-slate-400 leading-relaxed mt-6">
+                  💡 双击灵感卡片文本域，可开始撰写文言大义。本画布配置完全存储在您的本地浏览器 (localStorage) 里面，安心锁存不丢失。
                 </div>
               </div>
 
-              {/* Real Interactive Infinite-Canvas Grid container */}
-              <div 
+              {/* Middle Frame: Real Infinite canvas space with visual radial grids patterns */}
+              <div
                 ref={canvasRef}
-                className="flex-1 h-full relative cursor-grab active:cursor-grabbing overflow-hidden"
+                className="flex-1 h-full relative overflow-hidden bg-slate-50 cursor-grab active:cursor-grabbing"
                 onMouseDown={handleCanvasMouseDown}
                 onMouseMove={handleCanvasMouseMove}
                 onMouseUp={handleCanvasMouseUp}
                 onMouseLeave={handleCanvasMouseUp}
               >
                 
-                {/* Visual grid repeating indicator */}
+                {/* Micro repeating grid indicator backing */}
                 <div 
-                  className="absolute inset-0 bg-slate-100 pointer-events-none"
+                  className="absolute inset-0 pointer-events-none select-none transition-all duration-75"
                   style={{
-                    backgroundImage: `radial-gradient(#cbd5e1 1.2px, transparent 1.2px)`,
+                    backgroundImage: `radial-gradient(#b0bccc 1.1px, transparent 1.1px)`,
                     backgroundSize: `${24 * canvasScale}px ${24 * canvasScale}px`,
                     backgroundPosition: `${canvasTranslate.x}px ${canvasTranslate.y}px`
                   }}
@@ -1463,94 +1804,353 @@ export default function App() {
                     transformOrigin: "0 0"
                   }}
                 >
-                  
                   {canvasCards.map((card) => {
                     const isSelected = selectedCanvasCard === card.id;
                     
+                    // Style attributes according to generic types
+                    let accentBorderColor = "border-slate-200 hover:border-slate-450";
+                    let accentThemeBg = "bg-slate-50";
+                    let accentTextRole = "text-slate-800";
+                    let badgeLabel = "灵感底蕴";
+
+                    if (card.type === "note") {
+                      accentBorderColor = isSelected ? "border-amber-500 ring-2 ring-amber-100" : "border-amber-250 hover:border-amber-400";
+                      accentThemeBg = "bg-amber-50/90";
+                      accentTextRole = "text-amber-900";
+                      badgeLabel = "灵感便签";
+                    } else if (card.type === "prompt") {
+                      accentBorderColor = isSelected ? "border-indigo-600 ring-2 ring-indigo-100" : "border-indigo-250 hover:border-indigo-400";
+                      accentThemeBg = "bg-indigo-50/90";
+                      accentTextRole = "text-indigo-900";
+                      badgeLabel = "提示词卡";
+                    } else if (card.type === "result") {
+                      accentBorderColor = isSelected ? "border-violet-600 ring-2 ring-violet-100" : "border-violet-250 hover:border-violet-400";
+                      accentThemeBg = "bg-violet-50/90";
+                      accentTextRole = "text-violet-900";
+                      badgeLabel = "AI结果";
+                    } else if (card.type === "image") {
+                      accentBorderColor = isSelected ? "border-emerald-600 ring-2 ring-emerald-100" : "border-slate-250 hover:border-emerald-400";
+                      accentThemeBg = "bg-white";
+                      accentTextRole = "text-slate-800";
+                      badgeLabel = "创意原画";
+                    }
+
                     return (
                       <div
                         key={card.id}
-                        className={`absolute canvas-card bg-white rounded-2xl shadow-[0_4px_20px_rgba(0,0,0,0.03)] border-2 transition-shadow duration-150 ${
-                          isSelected ? "border-indigo-600 shadow-md" : "border-slate-200"
-                        }`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedCanvasCard(card.id);
+                          // Reorder cards array to naturally draw selected on top
+                          setCanvasCards(prev => {
+                            const filtered = prev.filter(c => c.id !== card.id);
+                            return [...filtered, card];
+                          });
+                        }}
+                        className={`absolute canvas-card bg-white rounded-2xl shadow-[0_4px_24px_rgba(15,23,42,0.04)] border-2 flex flex-col justify-between transition-shadow group ${accentBorderColor}`}
                         style={{
                           left: card.x,
                           top: card.y,
-                          width: card.width,
-                          minHeight: card.height
+                          width: card.width || 260,
+                          minHeight: card.height || 140
                         }}
                       >
 
-                        {/* Card Header drag handle bar */}
-                        <div 
+                        {/* Card Drag Handle Title Block */}
+                        <div
                           onMouseDown={(e) => handleCardDragStart(e, card)}
-                          className={`px-3 py-2 border-b rounded-t-2xl flex items-center justify-between cursor-move text-[11px] font-bold ${
-                            card.type === "note" 
-                              ? "bg-amber-50 text-amber-800 border-amber-100" 
-                              : card.type === "prompt"
-                                ? "bg-indigo-50/50 text-indigo-800 border-indigo-100"
-                                : "bg-emerald-50 text-emerald-800 border-emerald-100"
-                          }`}
+                          className={`px-3 py-2 cursor-move rounded-t-2xl border-b flex items-center justify-between text-[10px] font-black tracking-wide uppercase ${accentThemeBg} ${accentTextRole}`}
                         >
-                          <span className="flex items-center gap-1 truncate">
+                          <div className="flex items-center gap-1.5 truncate max-w-[80%]">
                             <Move className="w-3 h-3 text-slate-400 shrink-0" />
-                            <input 
-                              type="text" 
-                              value={card.title}
-                              onChange={(e) => handleCardTitleChange(card.id, e.target.value)}
-                              className="bg-transparent border-none font-bold text-[11px] focus:outline-none focus:ring-0 focus:underline w-full"
-                            />
-                          </span>
+                            <span className="bg-white/80 px-1 py-0.5 rounded text-[8px] font-black shrink-0">{badgeLabel}</span>
+                            <span className="truncate">{card.title}</span>
+                          </div>
+
                           <button
-                            onClick={() => deleteCanvasCard(card.id)}
-                            className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteCanvasCard(card.id);
+                            }}
+                            className="p-0.5 text-slate-400 hover:text-rose-600 hover:bg-slate-100 rounded transition shrink-0"
+                            title="从画布剔除"
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
                         </div>
 
-                        {/* Card Content body with textarea */}
-                        <div className="p-3">
+                        {/* Card Content & Media Body */}
+                        <div className="p-3.5 flex-1 flex flex-col justify-between space-y-3">
                           
-                          {/* Image rendering inside image type note */}
+                          {/* Rich inline image rendering for picture nodes */}
                           {card.imageUrl && (
-                            <div className="relative rounded-lg overflow-hidden bg-slate-900 border mb-2 aspect-video">
-                              <img src={card.imageUrl} alt={card.title} className="w-full h-full object-cover" />
+                            <div className="relative rounded-xl overflow-hidden bg-slate-900 border border-slate-100 aspect-video group/img">
+                              <img 
+                                src={card.imageUrl} 
+                                alt={card.title} 
+                                className="w-full h-full object-cover" 
+                                referrerPolicy="no-referrer"
+                              />
+                              <div className="absolute inset-0 bg-slate-950/25 opacity-0 group-hover/img:opacity-100 transition duration-250 flex items-center justify-center gap-2">
+                                <a
+                                  href={card.imageUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-1.5 rounded-full bg-white text-slate-900 hover:scale-105 transition shadow-sm"
+                                  title="在新标签页中看高清图"
+                                >
+                                  <Maximize2 className="w-3.5 h-3.5" />
+                                </a>
+                                <a
+                                  href={card.imageUrl}
+                                  download={`ronin-card-render-${card.id}.png`}
+                                  className="p-1.5 rounded-full bg-indigo-600 text-white hover:scale-105 transition shadow-sm"
+                                  title="立刻下载到本地"
+                                  onClick={(e) => {
+                                    // if base64 direct click download
+                                    if (card.imageUrl?.startsWith("data:")) {
+                                      e.stopPropagation();
+                                      const link = document.createElement("a");
+                                      link.href = card.imageUrl;
+                                      link.download = `ronin-card-${card.id}.png`;
+                                      document.body.appendChild(link);
+                                      link.click();
+                                      document.body.removeChild(link);
+                                    }
+                                  }}
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                </a>
+                              </div>
                             </div>
                           )}
 
+                          {/* Editable plain text area details */}
                           <textarea
                             value={card.content}
                             onChange={(e) => handleCardContentChange(card.id, e.target.value)}
-                            rows={card.type === "image" ? 2 : 5}
-                            className="w-full text-xs text-slate-600 bg-transparent border-none focus:ring-0 resize-none outline-none leading-relaxed"
-                            placeholder="写点什么..."
+                            rows={card.type === "image" ? 2 : 4}
+                            className="w-full text-xs text-slate-650 bg-transparent border-none outline-none focus:ring-0 resize-none leading-relaxed text-slate-700"
+                            placeholder="双击编辑文字资产..."
                           />
+
+                          {/* Individual Card toolbar utilities */}
+                          <div className="pt-2 border-t border-slate-100/60 flex items-center justify-between text-[10px] text-slate-400">
+                            <span className="font-mono text-[8px] opacity-60">ID: {card.id.slice(-5)}</span>
+                            
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigator.clipboard.writeText(card.content);
+                                showToast("卡片文本内容已复制到剪切板！", "success");
+                              }}
+                              className="p-1 hover:text-slate-900 hover:bg-slate-50 rounded transition flex items-center gap-1 font-bold"
+                              title="一键拷贝文字内容"
+                            >
+                              <Copy className="w-3 h-3 text-slate-400" />
+                              <span>复制</span>
+                            </button>
+                          </div>
+
                         </div>
 
                       </div>
                     );
                   })}
-
                 </div>
 
-                {/* Upper visual scale zoom widget absolute to viewer */}
-                <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-md px-3 py-2 rounded-xl shadow-lg border border-slate-200/50 flex items-center gap-2.5 text-xs font-bold z-10">
+                {/* Floating bottom viewport configuration and scale info */}
+                <div className="absolute bottom-5 right-5 bg-white/90 backdrop-blur-md px-3 py-2 rounded-xl shadow-lg border border-slate-200/50 flex items-center gap-3 text-xs font-black z-10">
                   <button 
-                    onClick={() => setCanvasScale(Math.max(0.5, canvasScale - 0.1))}
-                    className="p-1 rounded hover:bg-slate-100 text-slate-600 font-extrabold"
+                    type="button"
+                    onClick={() => setCanvasScale(Math.max(0.4, parseFloat((canvasScale - 0.1).toFixed(2))))}
+                    className="p-1 rounded hover:bg-slate-100 text-slate-600 font-extrabold w-6 h-6 flex items-center justify-center border border-slate-150"
                   >
                     －
                   </button>
-                  <span className="text-[11px] tracking-tight">{Math.round(canvasScale * 100)}%</span>
+                  <span className="text-[11px] tracking-tight text-slate-700 select-none min-w-[35px] text-center">{Math.round(canvasScale * 100)}%</span>
                   <button 
-                    onClick={() => setCanvasScale(Math.min(2, canvasScale + 0.1))}
-                    className="p-1 rounded hover:bg-slate-100 text-slate-600 font-extrabold"
+                    type="button"
+                    onClick={() => setCanvasScale(Math.min(2, parseFloat((canvasScale + 0.1).toFixed(2))))}
+                    className="p-1 rounded hover:bg-slate-100 text-slate-600 font-extrabold w-6 h-6 flex items-center justify-center border border-slate-150"
                   >
                     ＋
                   </button>
+                  <div className="h-4 w-[1px] bg-slate-200 mx-0.5"></div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCanvasTranslate({ x: 0, y: 0 });
+                      setCanvasScale(1);
+                      showToast("画布缩放平移参数已归位", "info");
+                    }}
+                    className="p-1.5 px-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-[10px] text-slate-600 transition"
+                  >
+                    视角重置
+                  </button>
                 </div>
 
+              </div>
+
+              {/* Right Panel: Figma-inspired responsive Card Attributes Inspector Sidebar */}
+              <div className="w-full lg:w-80 bg-white border-t lg:border-t-0 lg:border-l border-slate-200 p-5 shrink-0 z-10 flex flex-col justify-between overflow-y-auto">
+                {selectedCanvasCard ? (() => {
+                  const activeCard = canvasCards.find(c => c.id === selectedCanvasCard);
+                  if (!activeCard) {
+                    return (
+                      <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
+                        <Layers className="w-8 h-8 text-slate-300 mb-2 animate-bounce" />
+                        <h4 className="text-xs font-bold text-slate-550">卡片资产已失效</h4>
+                        <p className="text-[10px] mt-1">请重选画布上的物品</p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-6">
+                      
+                      {/* Section Title Header */}
+                      <div>
+                        <span className="text-[10px] uppercase font-mono tracking-widest text-slate-400 font-extrabold block">Property Inspector</span>
+                        <h3 className="text-sm font-black text-slate-900 mt-1 flex items-center gap-1.5">
+                          <Sliders className="w-4 h-4 text-indigo-600" />
+                          <span>卡片属性编辑器</span>
+                        </h3>
+                        <div className="h-[1px] bg-slate-100 mt-3"></div>
+                      </div>
+
+                      {/* Card Type Tag */}
+                      <div className="flex items-center justify-between text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                        <span className="text-slate-500">实体类型:</span>
+                        <span className="font-mono px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-black tracking-wide uppercase text-[9px]">
+                          {activeCard.type}
+                        </span>
+                      </div>
+
+                      {/* Edit Card Title input */}
+                      <div className="space-y-2">
+                        <label className="block text-[11px] font-bold text-slate-700">卡目标题/标号 (Title):</label>
+                        <input
+                          type="text"
+                          value={activeCard.title}
+                          onChange={(e) => handleCardTitleChange(activeCard.id, e.target.value)}
+                          className="w-full p-2 text-xs bg-white border border-slate-200 rounded-xl"
+                        />
+                      </div>
+
+                      {/* Edit Card Width custom Figma Slider controller! */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-[11px] text-slate-700">
+                          <span className="font-bold">卡片宽度 (Width):</span>
+                          <span className="font-mono text-xs font-semibold">{activeCard.width || 260} px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="180"
+                          max="600"
+                          step="10"
+                          value={activeCard.width || 260}
+                          onChange={(e) => {
+                            const newWidth = parseInt(e.target.value);
+                            setCanvasCards(prev => prev.map(c => {
+                              if (c.id === activeCard.id) {
+                                return { ...c, width: newWidth };
+                              }
+                              return c;
+                            }));
+                          }}
+                          className="w-full accent-indigo-600 h-1.5 bg-slate-100 rounded-lg appearance-none cursor-ew-resize"
+                        />
+                        <div className="flex justify-between text-[8px] text-slate-400">
+                          <span>180px (紧凑)</span>
+                          <span>600px (宽幅)</span>
+                        </div>
+                      </div>
+
+                      {/* Edit Card Content Text Area */}
+                      <div className="space-y-2">
+                        <label className="block text-[11px] font-bold text-slate-700">核心文本资产 (Content):</label>
+                        <textarea
+                          rows={6}
+                          value={activeCard.content}
+                          onChange={(e) => handleCardContentChange(activeCard.id, e.target.value)}
+                          className="w-full p-2.5 text-xs bg-white border border-slate-200 rounded-xl text-slate-700 leading-relaxed"
+                          placeholder="修改详细文本..."
+                        />
+                      </div>
+
+                      {/* Action buttons inside right properties panel side bar */}
+                      <div className="space-y-2 pt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(activeCard.content);
+                            showToast("文本已顺利复制至剪切板！", "success");
+                          }}
+                          className="w-full py-2.5 rounded-xl bg-slate-900 text-white text-xs font-bold hover:bg-indigo-600 transition flex items-center justify-center gap-1.5"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>复制此卡文字</span>
+                        </button>
+
+                        {activeCard.imageUrl && (
+                          <a
+                            href={activeCard.imageUrl}
+                            download={`ronin-card-${activeCard.id}.png`}
+                            onClick={(e) => {
+                              if (activeCard.imageUrl?.startsWith("data:")) {
+                                e.preventDefault();
+                                const link = document.createElement("a");
+                                link.href = activeCard.imageUrl;
+                                link.download = `ronin-art-${activeCard.id}.png`;
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                              }
+                            }}
+                            className="w-full py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold transition flex items-center justify-center gap-1.5"
+                          >
+                            <Download className="w-3.5 h-3.5 text-slate-400" />
+                            <span>下载此卡大图</span>
+                          </a>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => deleteCanvasCard(activeCard.id)}
+                          className="w-full py-2.5 rounded-xl bg-rose-50 text-rose-600 text-xs font-bold hover:bg-rose-100 transition flex items-center justify-center gap-1.5"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>从当前画布下架</span>
+                        </button>
+                      </div>
+
+                    </div>
+                  );
+                })() : (
+                  <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400/80 my-auto">
+                    <div className="p-3 mb-3 bg-slate-50 border border-slate-100 rounded-2xl text-slate-400">
+                      <HelpCircle className="w-6 h-6 text-slate-300 animate-pulse" />
+                    </div>
+                    <h4 className="text-xs font-extrabold text-slate-900">选中卡片启用高层编辑</h4>
+                    <p className="text-[10px] mt-1.5 leading-relaxed text-slate-400 max-w-[180px] mx-auto">
+                      在画布中央双击或选择任一灵感单元。即可在此调起 Figma 级别的宽度调整与文字快捷备份操作。
+                    </p>
+                  </div>
+                )}
+
+                <div className="border-t border-slate-100 pt-3 text-[9px] text-slate-400 flex items-center justify-between">
+                  <span>画布卡片数量: {canvasCards.length} 个</span>
+                  <button 
+                    type="button"
+                    onClick={() => setSelectedCanvasCard(null)} 
+                    className="hover:underline font-bold text-indigo-600 bg-transparent shrink-0"
+                  >
+                    清除选择
+                  </button>
+                </div>
               </div>
 
             </div>
