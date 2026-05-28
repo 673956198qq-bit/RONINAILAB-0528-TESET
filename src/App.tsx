@@ -603,10 +603,48 @@ export default function App() {
 
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#f5f7fa] text-slate-800 font-sans tracking-tight">
+    <div className="relative min-h-screen flex flex-col bg-slate-50/40 text-slate-800 font-sans tracking-tight overflow-x-hidden">
       
+      {/* Modern Premium Ambient Glowing Animated Background Blobs */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+        <div className="absolute -top-40 -left-40 w-[35rem] h-[35rem] bg-gradient-to-tr from-indigo-200/40 to-teal-100/40 rounded-full mix-blend-multiply filter blur-[100px] opacity-70 animate-blob-1"></div>
+        <div className="absolute top-[20%] -right-40 w-[30rem] h-[30rem] bg-gradient-to-br from-indigo-100/30 to-violet-200/40 rounded-full mix-blend-multiply filter blur-[90px] opacity-65 animate-blob-2"></div>
+        <div className="absolute -bottom-40 left-[10%] w-[45rem] h-[45rem] bg-gradient-to-tr from-indigo-200/20 to-teal-200/30 rounded-full mix-blend-multiply filter blur-[120px] opacity-80 animate-blob-3"></div>
+        <div className="absolute top-[45%] left-[40%] -translate-x-1/2 -translate-y-1/2 w-[35rem] h-[35rem] bg-gradient-to-br from-rose-100/20 to-indigo-100/30 rounded-full mix-blend-multiply filter blur-[110px] opacity-50 animate-blob-1"></div>
+      </div>
+
+      {/* Inject custom dynamic keyframes animation styles blocks */}
+      <style>{`
+        @keyframes floatBlob1 {
+          0% { transform: translate(0px, 0px) scale(1); }
+          33% { transform: translate(50px, -70px) scale(1.15); }
+          66% { transform: translate(-35px, 40px) scale(0.9); }
+          100% { transform: translate(0px, 0px) scale(1); }
+        }
+        @keyframes floatBlob2 {
+          0% { transform: translate(0px, 0px) scale(1); }
+          50% { transform: translate(-70px, 70px) scale(1.2); }
+          100% { transform: translate(0px, 0px) scale(1); }
+        }
+        @keyframes floatBlob3 {
+          0% { transform: translate(0px, 0px) scale(1); }
+          33% { transform: translate(60px, 40px) scale(0.95); }
+          66% { transform: translate(-50px, -50px) scale(1.1); }
+          100% { transform: translate(0px, 0px) scale(1); }
+        }
+        .animate-blob-1 {
+          animation: floatBlob1 24s infinite ease-in-out;
+        }
+        .animate-blob-2 {
+          animation: floatBlob2 28s infinite ease-in-out;
+        }
+        .animate-blob-3 {
+          animation: floatBlob3 32s infinite ease-in-out;
+        }
+      `}</style>
+
       {/* 4px custom visual timeline decoration */}
-      <div className="h-1 w-full bg-gradient-to-r from-teal-400 via-indigo-600 to-indigo-950"></div>
+      <div className="h-1 w-full bg-gradient-to-r from-teal-400 via-indigo-600 to-indigo-950 relative z-10"></div>
 
       {/* Exquisite Static Notifications Portal */}
       {notification && (
@@ -625,7 +663,7 @@ export default function App() {
       />
 
       {/* Primary Context Workspace Section */}
-      <main className="flex-1 flex flex-col">
+      <main className="relative z-10 flex-1 flex flex-col">
         
         {/* ========================================================
             一、首页 ROUTE: HOME
